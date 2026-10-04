@@ -1,0 +1,17 @@
+{
+  "name": "@g-ace/asteria-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.12 <23" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test --test-concurrency=1 dist/*.test.js",
+    "verify": "npm run check && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.8",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,0 +1,22 @@
+name: AsteriaAI CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+      - run: npm install --no-fund --no-audit
+      - run: npm run verify
+      - run: python3 -m py_compile scripts/raw-model-benchmark.py scripts/service-benchmark.py
