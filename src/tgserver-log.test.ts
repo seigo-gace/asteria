@@ -35,20 +35,22 @@ test('P007 envelope is fixed and excludes arbitrary error text', () => {
 });
 
 test('P007 sink sends logs[] without producer secret and accepts duplicate receipt', async () => {
-  let captured: { url: string; headers: HeadersInit | undefined; body: string | undefined } | null = null;
+  const captured: Array<{ url: string; headers: HeadersInit | undefined; body: string | undefined }> = [];
   const sink = new TgServerLogSink({
     url: 'http://127.0.0.1:3000/ingest',
-    batchSize: 1,
+    batchSize: 10,
     fetchImpl: async (input, init) => {
-      captured = { url: String(input), headers: init?.headers, body: String(init?.body ?? '') };
+      captured.push({ url: String(input), headers: init?.headers, body: String(init?.body ?? '') });
       return new Response(JSON.stringify({ results: [{ status: 'duplicate' }] }), { status: 200 });
     }
   });
   sink.log({ level: 'info', event: 'translate_succeeded', status: 200, createdAt: '2026-10-04T12:00:01.000Z' });
-  await sink.flush();
-  assert.equal(captured?.url, 'http://127.0.0.1:3000/ingest/bulk');
-  assert.deepEqual(captured?.headers, { 'content-type': 'application/json' });
-  const body = JSON.parse(captured?.body ?? '{}');
+  assert.equal(await sink.flush(), true);
+  const request = captured[0];
+  assert.ok(request);
+  assert.equal(request.url, 'http://127.0.0.1:3000/ingest/bulk');
+  assert.deepEqual(request.headers, { 'content-type': 'application/json' });
+  const body = JSON.parse(request.body ?? '{}');
   assert.equal(body.logs[0].project_id, 'P007');
   assert.equal(sink.queued, 0);
 });
