@@ -51,6 +51,30 @@ All routes require `Authorization: Bearer <ASTERIA_INTERNAL_TOKEN>`.
 
 Translate request uses `request_id`, `profile_version`, BCP47 `target_language`, optional `source_language`, reserved `glossary_id`, and ordered `{id,text}` segments.
 
+## TGserver ZERO runtime logging
+
+AsteriaAI is assigned TGserver ZERO project `P007` / stream `default`. The live Telegram topic set for P007 is provisioned, while TGserver registry Source remains on the unmerged ZERO integration line until the owner-side change is approved and deployed.
+
+The Project-side producer is implemented as a bounded fail-open queue:
+
+- fixed `project_id=P007`;
+- canonical `POST /ingest/bulk` + `logs[]` contract;
+- events are limited to `asteria_started`, `translate_succeeded`, and `translate_failed`;
+- payload contains only fixed event name, bounded internal error code, HTTP status, and event timestamp;
+- translation text, request body, bearer token, AI Core key, arbitrary exception message, and model response body are not forwarded;
+- no per-producer TGserver log secret/header is introduced;
+- accepted and duplicate receipts are treated as success; rejected/malformed/mismatched receipts are requeued within the bounded queue;
+- TGserver unavailability never blocks translation responses.
+
+Runtime configuration:
+
+```text
+TGSERVER_LOG_URL=http://127.0.0.1:3000
+TGSERVER_LOG_TIMEOUT_MS=1500
+```
+
+Source implementation and Topic existence do not prove runtime delivery. Real P007 acceptance, Telegram raw persistence, index visibility, and central Reader retrieval remain separate evidence gates until deployment is approved and executed.
+
 ## Development
 
 Node `>=22.12 <23`.
@@ -63,8 +87,18 @@ python3 -m py_compile scripts/raw-model-benchmark.py scripts/service-benchmark.p
 
 ## Runtime boundary
 
-No merge, deploy, new model download, external provider, production switch, Telegram topic provisioning, or secret mutation is part of the initial source migration.
+No main merge, deploy, new model download, external provider, production switch, secret mutation, or provider mutation is performed by the current source work.
 
-TGserver ZERO source registration is being handled separately as `P007` / stream `default`; until its registration PR is merged and topics/producer/real-log E2E are complete, Runtime log search is not active.
+TGserver ZERO runtime state is intentionally split:
+
+```text
+P007_PROJECT_ID=SOURCE_ASSIGNED
+P007_TOPIC_PROVISIONED=PASS
+P007_PRODUCER_SOURCE=IMPLEMENTED_ON_PROJECT_BRANCH
+P007_PRODUCER_RUNTIME=NOT_VERIFIED
+P007_TELEGRAM_RAW=NOT_VERIFIED
+P007_INDEX_SEARCH=NOT_EXECUTED
+P007_CENTRAL_READER=NOT_EXECUTED
+```
 
 See `docs/` for design, migration, verification, language capability, and TGserver ZERO usage.
