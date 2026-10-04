@@ -1,0 +1,20 @@
+services:
+  asteria-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: asteria-ai
+    env_file:
+      - .env
+    network_mode: host
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:'+process.env.PORT+'/internal/v1/health',{headers:{authorization:'Bearer '+process.env.ASTERIA_INTERNAL_TOKEN}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

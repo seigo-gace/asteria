@@ -1,0 +1,4 @@
+{"id":"seed-en-ja","source_language":"en","target_language":"ja","source":"Do not delete backups until 2026-12-31. Keep the failure rate below 2.5%. URL: https://asterav8.jp","review_status":"SEED_NOT_ACCEPTANCE_AUTHORITY"}
+{"id":"seed-ja-en","source_language":"ja","target_language":"en","source":"期限は2026-10-04です。料金は12,500円、進捗は95%です。","review_status":"SEED_NOT_ACCEPTANCE_AUTHORITY"}
+{"id":"seed-de-ja","source_language":"de","target_language":"ja","source":"Wenn der Test fehlschlägt, veröffentliche das Ergebnis nicht. Halte `const x = 1` unverändert.","review_status":"SEED_NOT_ACCEPTANCE_AUTHORITY"}
+{"id":"seed-ar-en","source_language":"ar","target_language":"en","source":"لا تفرض رسوماً تزيد عن 125.50 دولار أمريكي. الموعد النهائي هو 01 نوفمبر 2026.","review_status":"SEED_NOT_ACCEPTANCE_AUTHORITY"}
