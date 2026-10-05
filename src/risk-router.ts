@@ -28,7 +28,8 @@ const NEGATION = /\b(?:no|not|never|neither|nor|without|nicht|kein(?:e|en|er|es)
 const CONDITION = /\b(?:if|unless|provided\s+that|when|whenever|only\s+if|falls|wenn|sofern|si|cuando|se|caso|ikiwa)\b|(?:もし|場合|限り|なら|当|如果|若|只要|경우|면)|(?:إذا|إن|عند)/iu;
 const EXCEPTION = /\b(?:except|exception|unless|apart\s+from|excepté|sauf|excepto|salvo|exceto|isipokuwa)\b|(?:例外|除く|除き|ただし|但し|除了|除外|제외)|(?:إلا|باستثناء)/iu;
 const MODALITY = /\b(?:must|must\s+not|may|may\s+not|should|required|optional|permitted|prohibited|muss|darf|soll|doit|peut|debe|puede|deve|pode|lazima|ruhusa)\b|(?:必須|必要|べき|してよい|してはならない|可能|必须|应|可以|不得|해야|가능)|(?:يجب|ينبغي|يجوز|ممنوع)/iu;
-const REFERENCE = /\b(?:this|that|these|those|it|they|them|he|she|former|latter|above|below|aforementioned|same|previous|following|owner|referent|pronoun)\b|(?:これ|それ|あれ|この|その|彼|彼女|同上|前者|後者|上記|下記|当該|所有者|主体)|(?:这|该|上述|下述|其|それぞれ|그|해당|상기)|(?:هذا|هذه|ذلك|تلك|المذكور)/iu;
+const REFERENCE_GENERIC = /\b(?:this|that|these|those|it|they|them|he|she)\b|(?:これ|それ|あれ|この|その|彼|彼女|其|그)|(?:هذا|هذه|ذلك|تلك)/iu;
+const REFERENCE_STRONG = /\b(?:former|latter|above|below|aforementioned|same\s+(?:item|party|entity|person|subject)|previous|following|referent|pronoun)\b|(?:同上|前者|後者|上記|下記|当該|上述|下述|상기|해당)|(?:المذكور|أعلاه|أدناه)/iu;
 const AMBIGUITY = /\b(?:ambiguous|ambiguity|unclear|unknown|unspecified|undetermined|uncertain|could\s+refer|not\s+clear|mehrdeutig|unklar|ambigu|incertain|ambiguo|incierto|ambíguo|incerto|haijulikani)\b|(?:曖昧|不明|未確定|特定できない|不詳|不清楚|不明确|模糊|불명확|모호|غير\s+واضح|غامض)/iu;
 
 function scripts(source: string): string[] {
@@ -61,7 +62,7 @@ export function classifyTranslationRisk(bodies: readonly string[], inspectProtec
   if (EXCEPTION.test(clean)) signals.add('exception');
   if (MODALITY.test(clean)) signals.add('modality');
   if (inspected.count > 0) signals.add('quantity_or_protected_value');
-  if (REFERENCE.test(clean)) signals.add('reference_context');
+  if (REFERENCE_STRONG.test(clean) || (bodies.length > 1 && REFERENCE_GENERIC.test(clean))) signals.add('reference_context');
   if (AMBIGUITY.test(clean)) signals.add('explicit_ambiguity');
 
   let riskClass: RiskClass = 'simple';
