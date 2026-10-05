@@ -8,7 +8,7 @@ asteria exists to accurately read text in any language and transform it into the
 
 The completed product is intended to use one shared Meaning Integrity Core for cross-language translation, same-language canonical rewrite, and later controlled style/native-expression transformation. The current implementation priority remains **cross-language translation correctness first**; same-language rewrite and style/native optimization must not delay the Translation Integrity Core.
 
-asteria owns language-transformation AI execution, deterministic preservation, semantic evidence/verification, benchmarking, runtime boundaries, and its TGserver ZERO P007 runtime producer. Product applications keep their own UI/domain mapping and send generic ordered segments.
+asteria owns language-transformation AI execution, deterministic preservation, semantic evidence/verification, bounded failure memory, benchmarking, runtime boundaries, and its TGserver ZERO P007 runtime producer. Product applications keep their own UI/domain mapping and send generic ordered segments.
 
 Migration source authority: Astera App Draft PR #72, source snapshot `169be9309695396b27f05e4f91fea4823ea5e8fc`.
 
@@ -54,15 +54,31 @@ Optional normalization is **not** an all-request preprocessing step.
 
 Source usage exposes `normalization_attempts`, `normalization_accepts`, `normalization_rejects`, and `normalization_validations`. A simple or quantity-only successful path keeps the prior call count. A normalization candidate rejected at the direct equivalence gate adds two local model calls; a fully accepted normalization path adds four local calls because normalized evidence is independently rebuilt and revalidated. Runtime A/B must justify that extra cost before benefit is claimed.
 
+### Persistent Translation Failure Memory
+
+`asteria` now has a translation-specific persistent failure-memory source contract derived from proven debugAI continuation/history rules.
+
+- memory identity is bound to a SHA-256 digest of profile version, source/target language binding, model identities and ORIGINAL input;
+- accepted source Meaning Evidence is separately hashed and used to decide whether a prior failure is still applicable;
+- only fixed `ErrorDelta` classes and bounded route/attempt metadata can be reused as guidance;
+- prior candidate translation prose, raw ORIGINAL text, prompts, conversations, private reasoning and secrets are not persisted in memory records;
+- a changed input binding does not reuse another source's history;
+- changed accepted evidence marks prior failures as reopened rather than blindly applying stale guidance;
+- prior PASS translation text is never returned as a cache hit; every request is regenerated from ORIGINAL and reverified;
+- malformed/untrusted JSONL records are ignored and cannot inject arbitrary guidance;
+- memory read/write failure increments observability counters but does not bypass or weaken the existing fail-closed Translation Integrity gates.
+
+Source usage exposes `memory_hits`, `memory_reopened`, `memory_writes`, and `memory_errors`. The default source path is `/app/data/translation-memory.jsonl`; Docker creates a writable `/app/data` directory and Compose defines a named volume. **Source/CI proves only the contract and wiring. Actual persistence across restart/recreate remains Runtime-unverified until the approved runtime gate is executed.**
+
 ## Current completion phase
 
 The current phase is intentionally limited to **Translation Integrity Core**: meaning preservation, safety, correctness and reproducible evidence before same-language canonical rewrite or native/style optimization.
 
-Source-side completion gates now include deterministic protected-value/structure validation, semantic equivalence/requested-language verification, ORIGINAL-anchored retry, fail-closed language/evidence handling, deterministic Risk Router classification, selective meaning-preserving normalization with direct equivalence and second ORIGINAL evidence validation, bounded fresh-context reanalysis, and second-failure fail closed.
+Source-side completion gates now include deterministic protected-value/structure validation, semantic equivalence/requested-language verification, ORIGINAL-anchored retry, fail-closed language/evidence handling, deterministic Risk Router classification, selective meaning-preserving normalization with direct equivalence and second ORIGINAL evidence validation, bounded fresh-context reanalysis, bounded persistent failure-memory reuse, and second-failure fail closed.
 
 The 13-case multilingual/adversarial regression seed covers negation, prohibitions, conditions, exceptions, quantities, deadlines, ordering, permissions, mixed scripts, low-resource Swahili, and embedded prompt-injection text. The seed remains `SEED_NOT_ACCEPTANCE_AUTHORITY` until separately reviewed and exercised live.
 
-These are repository/CI capabilities only. Risk routing, normalization, Evidence Integrity and REANALYZE require real Qwen3 + Granite multilingual A/B and human evidence before translation-quality benefit or universal correctness can be claimed.
+These are repository/CI capabilities only. Risk routing, normalization, Evidence Integrity, REANALYZE and persistent failure memory require real Qwen3 + Granite multilingual A/B and human evidence before translation-quality benefit or universal correctness can be claimed.
 
 ## Architecture
 
@@ -81,17 +97,21 @@ Original Input / Context (Authority)
        -> Normalized Meaning Evidence
        -> ORIGINAL-vs-Normalized-Evidence Gate
        -> reject to ORIGINAL evidence on any non-pass
+  -> exact Binding + Evidence failure-memory lookup
+       -> same binding + same evidence: bounded rejected-error guidance only
+       -> changed binding/evidence: no blind reuse
   -> Qwen3 Controlled Generation from ORIGINAL
   -> deterministic + Granite independent verification
   -> Error Delta Router
        -> PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED
+  -> bounded failure/accepted checkpoint write
   -> Final Integrity Gate
   -> accepted output
 ```
 
-The **Original Input remains semantic authority**. Meaning Evidence and normalization are derived evidence/control aids and never silently replace ORIGINAL. Unknown or ambiguous meaning remains unresolved rather than guessed.
+The **Original Input remains semantic authority**. Meaning Evidence, normalization and memory are derived evidence/control aids and never silently replace ORIGINAL. Unknown or ambiguous meaning remains unresolved rather than guessed.
 
-Deterministic Japanese Parser MCP remains the first Language Intelligence Adapter reference implementation and is not yet integrated. Persistent Attempt/Checkpoint/Failure Memory, same-language canonicalization, and native/style modes remain later verified units.
+Deterministic Japanese Parser MCP remains the first Language Intelligence Adapter reference implementation and is not yet integrated. Same-language canonicalization and native/style modes remain later verified units.
 
 asteria does not know Astera App's eight result keys.
 
@@ -128,7 +148,7 @@ python3 -m py_compile scripts/raw-model-benchmark.py scripts/service-benchmark.p
 
 ## Runtime boundary
 
-No main merge, new model download, external provider change, production public cutover, or unrelated secret/provider mutation is part of the current Translation Integrity source unit. Existing server project is `/home/admin1/projects/asteria`; runtime/source synchronization and live verification are separate evidence gates.
+No main merge, new model download, external provider change, production public cutover, or unrelated secret/provider mutation is part of the current Translation Integrity source unit. Existing server project is `/home/admin1/projects/asteria`; runtime/source synchronization, named-volume activation and live persistence verification are separate evidence gates.
 
 ## Documentation
 

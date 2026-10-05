@@ -13,7 +13,7 @@ Two distinct layers remain mandatory:
 1. **Original Input / Context** — immutable semantic authority.
 2. **Meaning Evidence Graph** — structured evidence derived from ORIGINAL; it may constrain generation/verification but never replaces ORIGINAL.
 
-Normalization is also derived evidence/control input. It is never semantic authority. Unknown, ambiguous, conflicting or insufficiently supported meaning remains unresolved rather than guessed.
+Normalization and persistent failure memory are derived evidence/control inputs. Neither is semantic authority. Unknown, ambiguous, conflicting or insufficiently supported meaning remains unresolved rather than guessed.
 
 ### Executable processing flow
 1. Surface integrity scan protects numbers, dates, money, code, URLs, placeholders and other invariants.
@@ -31,11 +31,14 @@ Normalization is also derived evidence/control input. It is never semantic autho
    - after direct PASS, Qwen rebuilds Meaning Evidence from normalized text;
    - that rebuilt evidence must keep the same detected language and pass Granite against ORIGINAL again;
    - only then may normalized evidence replace ORIGINAL-derived evidence as generation guidance.
-8. Qwen controlled generation always translates ORIGINAL section bodies. `high-risk / ambiguous` use `risk_focused`; `simple / complex` use the existing document path.
-9. Multi-axis verification applies deterministic invariants, candidate semantic record, Granite semantic comparison, requested language validation and unresolved-meaning handling.
-10. `ErrorDelta` routing selects `PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED`.
-11. `REANALYZE` uses only ORIGINAL + verifier ErrorDelta in fresh context, excludes the prior candidate, revalidates rebuilt evidence, and allows at most one ORIGINAL-anchored regeneration.
-12. Final integrity gate precedes acceptance.
+8. Build an exact translation-memory input binding digest from profile version, language binding, model identities and ORIGINAL input. Hash the accepted source evidence separately.
+9. Read bounded prior rejected-attempt memory for the same input binding. Only records with the same accepted evidence may become failure-avoidance guidance; changed evidence reopens rather than blindly reapplies the old rejection.
+10. Qwen controlled generation always translates ORIGINAL section bodies. `high-risk / ambiguous` use `risk_focused`; `simple / complex` use the existing document path. Prior candidate prose is never replayed from memory.
+11. Multi-axis verification applies deterministic invariants, candidate semantic record, Granite semantic comparison, requested language validation and unresolved-meaning handling.
+12. `ErrorDelta` routing selects `PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED`.
+13. `REANALYZE` uses only ORIGINAL + verifier ErrorDelta in fresh context, excludes the prior candidate, revalidates rebuilt evidence, and allows at most one ORIGINAL-anchored regeneration.
+14. Rejected attempts append bounded failure metadata; accepted runs append an accepted checkpoint. No raw source/candidate prose, full prompt, conversation, private reasoning or secret is stored in translation memory.
+15. Final integrity gate precedes acceptance.
 
 ### Current data contracts
 - `TransformationRun`
@@ -44,8 +47,10 @@ Normalization is also derived evidence/control input. It is never semantic autho
 - `AttemptRecord`
 - `ErrorDelta`
 - `RiskProfile`
+- `TranslationMemoryRecord`
+- `TranslationMemoryContext`
 
-`TransformationRun` stores deterministic RiskProfile alongside ORIGINAL, contract, source evidence and attempts. Router trace must not become semantic authority.
+`TransformationRun` stores deterministic RiskProfile alongside ORIGINAL, contract, source evidence and attempts. Router trace and memory history must not become semantic authority.
 
 ### Risk Router boundary
 Risk classification and heavy-stage selection are intentionally separate. `high-risk` does not automatically mean every expensive stage runs. Risk Router itself is deterministic and zero-model-call; selected normalization is activated only for meaning-structure signals. Mandatory Evidence Integrity, deterministic protection and semantic verification remain common to all paths.
@@ -56,6 +61,20 @@ Meaning-preserving normalization is a selected analysis aid, not a summary/simpl
 The safety ordering is deliberate: ORIGINAL semantic reading, source-language validation and ORIGINAL Evidence Integrity all precede normalization. A rejected or unsafe normalization therefore falls back to already-validated ORIGINAL evidence instead of weakening the request or failing merely because the optional helper was not useful.
 
 Call overhead is observable. Simple and quantity-only paths keep prior call counts. Directly rejected normalization adds two local model calls; fully accepted normalization adds four local calls because normalized Meaning Evidence is rebuilt and independently checked against ORIGINAL. This overhead requires runtime A/B justification.
+
+### Persistent failure-memory boundary
+The translation memory reuses debugAI's durable-control principles at a translation-specific scale rather than copying the full debug workflow engine.
+
+- append-only JSONL is used as the source storage contract;
+- identity uses SHA-256 binding/evidence digests rather than raw source text;
+- only fixed `ErrorDeltaKind` / correction-route enums are consumable as guidance;
+- malformed/untrusted records are ignored and cannot inject arbitrary prompt text;
+- exact input binding is required for reuse;
+- same binding + changed accepted evidence is treated as reopened history, not reusable failure guidance;
+- prior accepted translation prose is never cached or returned;
+- each request regenerates from ORIGINAL and passes current deterministic + semantic verification again;
+- memory read/write failure is fail-open only for the memory helper and is counted in `memory_errors`; it never disables the fail-closed Translation Integrity gates;
+- default source path is `/app/data/translation-memory.jsonl`; Docker/Compose define a writable persistent-data contract, but restart/recreate survival is Runtime-unverified until separately exercised.
 
 ### Language Intelligence Adapter boundary
 The common core remains primary. Language-specific adapters are added only when repeatable evidence shows a language phenomenon is not handled adequately by the common path.
@@ -68,7 +87,8 @@ Reuse from debugAI and related G-ACE control assets applies at the contract leve
 - AI output is not evidence by itself;
 - attempts, checkpoints, verifier results and failure reasons are separated;
 - failure memory reuses evidence/failure patterns, not an old answer blindly;
-- repeated identical failed attempts are not allowed;
+- repeated identical failed attempts are not allowed to become unconstrained replay;
+- changed input/evidence invalidates blind reuse;
 - Source/CI/Runtime/Production evidence remain separate;
 - Runtime PASS is not AI correctness and Test PASS is not universal language correctness.
 
@@ -80,7 +100,7 @@ Reuse from debugAI and related G-ACE control assets applies at the contract leve
 Model-role changes require separate evidence.
 
 ### Security
-All supplied text is untrusted data. asteria never uses source text as executable instruction. Service and AI Core bind/access loopback only. Internal API uses bearer authentication. Secrets are environment-only. Prompt injection embedded in source text remains data.
+All supplied text is untrusted data. asteria never uses source text as executable instruction. Service and AI Core bind/access loopback only. Internal API uses bearer authentication. Secrets are environment-only. Prompt injection embedded in source text remains data. Persistent memory stores only validated bounded metadata, never raw source/candidate text or secret-bearing prompt material.
 
 ### Product modes
 - `translate` — current implementation priority.
