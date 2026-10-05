@@ -4,6 +4,7 @@ import { PROFILE_VERSION, translateSegments } from './engine.js';
 import { codedError } from './errors.js';
 import type { RuntimeConfig } from './config.js';
 import { GRANITE_MODEL_ID, QWEN_MODEL_ID } from './ai-core.js';
+import type { JapaneseLanguageIntelligence } from './japanese-language-intelligence.js';
 import type { TranslationMemory } from './translation-memory.js';
 import type { AsteriaRuntimeLogEvent } from './tgserver-log.js';
 
@@ -64,7 +65,12 @@ function errorBody(error: unknown): unknown {
   };
 }
 
-export function createAsteriaServer(config: RuntimeConfig, runtimeLogger?: RuntimeLogger, memory?: TranslationMemory): http.Server {
+export function createAsteriaServer(
+  config: RuntimeConfig,
+  runtimeLogger?: RuntimeLogger,
+  memory?: TranslationMemory,
+  japaneseLanguageIntelligence?: JapaneseLanguageIntelligence
+): http.Server {
   return http.createServer(async (req, res) => {
     let path = '/';
     try {
@@ -88,6 +94,7 @@ export function createAsteriaServer(config: RuntimeConfig, runtimeLogger?: Runti
           target_language: 'BCP47_REQUIRED',
           glossary: 'NOT_IMPLEMENTED_FAIL_CLOSED',
           persistent_failure_memory: memory ? 'SOURCE_CONFIGURED_RUNTIME_UNVERIFIED' : 'DISABLED',
+          japanese_language_intelligence: japaneseLanguageIntelligence ? 'SOURCE_CONFIGURED_RUNTIME_UNVERIFIED' : 'DISABLED',
           external_translation_api: false
         });
         return;
@@ -97,7 +104,8 @@ export function createAsteriaServer(config: RuntimeConfig, runtimeLogger?: Runti
         const result = await translateSegments(body, {
           aiCore: { baseUrl: config.aiCoreBaseUrl, apiKey: config.aiCoreApiKey },
           timeoutMs: config.translationTimeoutMs,
-          ...(memory ? { memory } : {})
+          ...(memory ? { memory } : {}),
+          ...(japaneseLanguageIntelligence ? { japaneseLanguageIntelligence } : {})
         });
         json(res, 200, result);
         runtimeLogger?.log({ level: 'info', event: 'translate_succeeded', status: 200 });

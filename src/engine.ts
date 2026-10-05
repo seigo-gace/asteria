@@ -2,6 +2,7 @@ import { GRANITE_MODEL_ID, QWEN_MODEL_ID, requestAiCore, type AiCoreConfig, type
 import { codedError } from './errors.js';
 import { evidenceIntegrityFailureSummary, evidenceIntegrityPass, evidenceIntegrityVerdict } from './evidence-integrity.js';
 import { createTranslationContract, errorDeltaGuidance, semanticErrorDeltas, selectCorrectionRoute, type AttemptRecord, type CorrectionRoute, type ErrorDelta, type TransformationRun } from './integrity-control.js';
+import type { JapaneseLanguageIntelligence } from './japanese-language-intelligence.js';
 import { canonicalLanguage, sameLanguage } from './language.js';
 import { meaningPreservingNormalizationCandidate, normalizationEquivalencePass, normalizationEquivalenceVerdict } from './normalization.js';
 import { decodeBatch, deterministicValidationError, encodeBatch, guidanceBlock, inspectProtectedLiterals, serializeMeaningBatch, translationInstruction, validateBatchStructure, type TranslationStrategy } from './quality.js';
@@ -12,9 +13,9 @@ import { meaningEvidenceDigest, translationInputBindingDigest, type TranslationM
 export const PROFILE_VERSION = 'asteria-translation-v1';
 export type TranslationSegment = { id: string; text: string };
 export type TranslationRequest = { request_id: string; profile_version: string; target_language: string; source_language?: string; glossary_id?: string; segments: TranslationSegment[] };
-export type TranslationUsage = { provider: 'ai_core_qwen3'; model: string; validation_model: string; calls: number; input_tokens: number; output_tokens: number; external_api_calls: 0; validation_fallbacks: number; evidence_validations: number; semantic_validations: number; semantic_retries: number; source_reanalyses: number; risk_focused_generations: number; normalization_attempts: number; normalization_accepts: number; normalization_rejects: number; normalization_validations: number; memory_hits: number; memory_reopened: number; memory_writes: number; memory_errors: number; risk_class: RiskClass; risk_signals: readonly RiskSignal[] };
+export type TranslationUsage = { provider: 'ai_core_qwen3'; model: string; validation_model: string; calls: number; input_tokens: number; output_tokens: number; external_api_calls: 0; validation_fallbacks: number; evidence_validations: number; semantic_validations: number; semantic_retries: number; source_reanalyses: number; risk_focused_generations: number; normalization_attempts: number; normalization_accepts: number; normalization_rejects: number; normalization_validations: number; memory_hits: number; memory_reopened: number; memory_writes: number; memory_errors: number; japanese_adapter_attempts: number; japanese_adapter_accepts: number; japanese_adapter_rejects: number; japanese_adapter_errors: number; risk_class: RiskClass; risk_signals: readonly RiskSignal[] };
 export type TranslationResponse = { request_id: string; profile_version: string; source_language?: string; detected_source_language?: string; target_language: string; language_capability_status: 'NOT_VERIFIED'; segments: TranslationSegment[]; usage: TranslationUsage };
-export type EngineConfig = { aiCore: AiCoreConfig; timeoutMs: number; memory?: TranslationMemory };
+export type EngineConfig = { aiCore: AiCoreConfig; timeoutMs: number; memory?: TranslationMemory; japaneseLanguageIntelligence?: JapaneseLanguageIntelligence };
 type BatchResult = EngineResult & { bodies: string[] };
 const NORMALIZATION_SIGNALS = new Set<RiskSignal>(['negation', 'condition', 'exception', 'modality', 'reference_context', 'explicit_ambiguity']);
 
@@ -26,7 +27,7 @@ async function translateBatch(aiCore: AiCoreConfig, bodies: string[], targetLang
 export async function translateSegments(input: unknown, config: EngineConfig): Promise<TranslationResponse> {
   const request = parseRequest(input), contract = createTranslationContract(request.targetLanguage, request.sourceLanguage);
   const active = request.segments.map((segment, index) => ({ segment, index })).filter(({ segment }) => segment.text.trim()), originals = active.map(({ segment }) => segment.text), risk = classifyTranslationRisk(originals, inspectProtectedLiterals);
-  const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, evidenceValidations: 0, semanticValidations: 0, semanticRetries: 0, sourceReanalyses: 0, riskFocusedGenerations: 0, normalizationAttempts: 0, normalizationAccepts: 0, normalizationRejects: 0, normalizationValidations: 0, memoryHits: 0, memoryReopened: 0, memoryWrites: 0, memoryErrors: 0 };
+  const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, evidenceValidations: 0, semanticValidations: 0, semanticRetries: 0, sourceReanalyses: 0, riskFocusedGenerations: 0, normalizationAttempts: 0, normalizationAccepts: 0, normalizationRejects: 0, normalizationValidations: 0, memoryHits: 0, memoryReopened: 0, memoryWrites: 0, memoryErrors: 0, japaneseAdapterAttempts: 0, japaneseAdapterAccepts: 0, japaneseAdapterRejects: 0, japaneseAdapterErrors: 0 };
   const add = (engine: EngineResult) => { totals.calls += 1; totals.inputTokens += engine.inputTokens; totals.outputTokens += engine.outputTokens; };
   const output = request.segments.map((segment) => ({ ...segment })); let detectedSourceLanguage: string | undefined;
   const bindingDigest = translationInputBindingDigest({ profileVersion: PROFILE_VERSION, ...(request.sourceLanguage ? { sourceLanguage: request.sourceLanguage } : {}), targetLanguage: request.targetLanguage, translatorModel: QWEN_MODEL_ID, validatorModel: GRANITE_MODEL_ID, originals });
@@ -37,6 +38,16 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
     if (request.sourceLanguage && !sameLanguage(request.sourceLanguage, detectedSourceLanguage)) throw codedError('SOURCE_LANGUAGE_MISMATCH', `Detected source language ${detectedSourceLanguage} does not match requested ${request.sourceLanguage}.`, false, 422);
     const originalEvidenceCheck = await evidenceIntegrityVerdict(config.aiCore, originalBatch, originalMeaning.graph, config.timeoutMs); add(originalEvidenceCheck.result); totals.evidenceValidations += 1;
     if (!evidenceIntegrityPass(originalEvidenceCheck.verdict)) throw codedError('TRANSLATION_EVIDENCE_INTEGRITY_FAILED', `Source evidence graph is not safely grounded in ORIGINAL: ${evidenceIntegrityFailureSummary(originalEvidenceCheck.verdict)}`, false, 422);
+
+    let japaneseGuidance = '';
+    if (focused && config.japaneseLanguageIntelligence && sameLanguage('ja', detectedSourceLanguage)) {
+      totals.japaneseAdapterAttempts += 1;
+      try {
+        const intelligence = await config.japaneseLanguageIntelligence.analyze(originals);
+        if (intelligence.accepted && intelligence.guidance) { japaneseGuidance = intelligence.guidance; totals.japaneseAdapterAccepts += 1; }
+        else totals.japaneseAdapterRejects += 1;
+      } catch { totals.japaneseAdapterErrors += 1; }
+    }
 
     let sourceMeaning: MeaningRecordResult = originalMeaning, normalizationAccepted = false;
     if (normalizationNeeded) {
@@ -63,7 +74,7 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
 
     const run: TransformationRun = { runId: request.requestId, original: originals, contract, risk, sourceEvidence: sourceMeaning.graph, attempts };
     const initialStrategy: TranslationStrategy = focused ? 'risk_focused' : 'document';
-    const initialGuidance = [focused ? riskGuidance(run.risk) : '', focused ? `NORMALIZATION_ATTEMPTED=${normalizationNeeded ? '1' : '0'}` : '', focused ? `NORMALIZATION_ACCEPTED=${normalizationAccepted ? '1' : '0'}` : '', focused ? `VERIFIED_SOURCE_EVIDENCE=${sourceMeaning.record}` : '', persistentGuidance].filter(Boolean).join('\n');
+    const initialGuidance = [focused ? riskGuidance(run.risk) : '', japaneseGuidance, focused ? `NORMALIZATION_ATTEMPTED=${normalizationNeeded ? '1' : '0'}` : '', focused ? `NORMALIZATION_ACCEPTED=${normalizationAccepted ? '1' : '0'}` : '', focused ? `VERIFIED_SOURCE_EVIDENCE=${sourceMeaning.record}` : '', persistentGuidance].filter(Boolean).join('\n');
     let candidate: BatchResult;
     try { if (focused) totals.riskFocusedGenerations += 1; candidate = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, initialStrategy, config.timeoutMs, initialGuidance); add(candidate); }
     catch (error) { if (!deterministicValidationError(error)) throw error; const failedUsage = (error as { engineUsage?: EngineResult }).engineUsage; if (failedUsage) add(failedUsage); totals.validationFallbacks += 1; candidate = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, 'lines', config.timeoutMs, initialGuidance); add(candidate); }
@@ -95,5 +106,5 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
     active.forEach(({ index }, translatedIndex) => { output[index] = { ...output[index]!, text: candidate.bodies[translatedIndex] ?? output[index]!.text }; });
   }
 
-  return { request_id: request.requestId, profile_version: PROFILE_VERSION, ...(request.sourceLanguage ? { source_language: request.sourceLanguage } : {}), ...(detectedSourceLanguage ? { detected_source_language: detectedSourceLanguage } : {}), target_language: request.targetLanguage, language_capability_status: 'NOT_VERIFIED', segments: output, usage: { provider: 'ai_core_qwen3', model: QWEN_MODEL_ID, validation_model: GRANITE_MODEL_ID, calls: totals.calls, input_tokens: totals.inputTokens, output_tokens: totals.outputTokens, external_api_calls: 0, validation_fallbacks: totals.validationFallbacks, evidence_validations: totals.evidenceValidations, semantic_validations: totals.semanticValidations, semantic_retries: totals.semanticRetries, source_reanalyses: totals.sourceReanalyses, risk_focused_generations: totals.riskFocusedGenerations, normalization_attempts: totals.normalizationAttempts, normalization_accepts: totals.normalizationAccepts, normalization_rejects: totals.normalizationRejects, normalization_validations: totals.normalizationValidations, memory_hits: totals.memoryHits, memory_reopened: totals.memoryReopened, memory_writes: totals.memoryWrites, memory_errors: totals.memoryErrors, risk_class: risk.riskClass, risk_signals: risk.signals } };
+  return { request_id: request.requestId, profile_version: PROFILE_VERSION, ...(request.sourceLanguage ? { source_language: request.sourceLanguage } : {}), ...(detectedSourceLanguage ? { detected_source_language: detectedSourceLanguage } : {}), target_language: request.targetLanguage, language_capability_status: 'NOT_VERIFIED', segments: output, usage: { provider: 'ai_core_qwen3', model: QWEN_MODEL_ID, validation_model: GRANITE_MODEL_ID, calls: totals.calls, input_tokens: totals.inputTokens, output_tokens: totals.outputTokens, external_api_calls: 0, validation_fallbacks: totals.validationFallbacks, evidence_validations: totals.evidenceValidations, semantic_validations: totals.semanticValidations, semantic_retries: totals.semanticRetries, source_reanalyses: totals.sourceReanalyses, risk_focused_generations: totals.riskFocusedGenerations, normalization_attempts: totals.normalizationAttempts, normalization_accepts: totals.normalizationAccepts, normalization_rejects: totals.normalizationRejects, normalization_validations: totals.normalizationValidations, memory_hits: totals.memoryHits, memory_reopened: totals.memoryReopened, memory_writes: totals.memoryWrites, memory_errors: totals.memoryErrors, japanese_adapter_attempts: totals.japaneseAdapterAttempts, japanese_adapter_accepts: totals.japaneseAdapterAccepts, japanese_adapter_rejects: totals.japaneseAdapterRejects, japanese_adapter_errors: totals.japaneseAdapterErrors, risk_class: risk.riskClass, risk_signals: risk.signals } };
 }
