@@ -73,6 +73,7 @@ export function createTranslationContract(targetLanguage: string, sourceLanguage
 function classifyDifference(detail: string): ErrorDeltaKind {
   const text = detail.toLowerCase();
   if (/untranslated|target language|wrong language|language mismatch/.test(text)) return 'wrong_language';
+  if (/ambigu|uncertain|unknown|guess|resolved without evidence/.test(text)) return 'unresolved_guess';
   if (/omit|missing|dropped|removed|lost/.test(text)) return 'omission';
   if (/unsupported|added|invented|hallucinat/.test(text)) return 'unsupported_addition';
   if (/negat|polarity|must not|prohibit|forbid/.test(text)) return 'polarity';
@@ -80,7 +81,6 @@ function classifyDifference(detail: string): ErrorDeltaKind {
   if (/modality|\bmust\b|\bmay\b|\bshould\b|required|optional|permission/.test(text)) return 'modality';
   if (/quantity|number|amount|percent|date|deadline|time|before|after/.test(text)) return 'quantity_time';
   if (/entity|reference|referent|pronoun|subject|object/.test(text)) return 'entity_reference';
-  if (/ambigu|uncertain|unknown|guess|resolved without evidence/.test(text)) return 'unresolved_guess';
   if (/literal|placeholder|structure|marker|url|code token/.test(text)) return 'literal_structure';
   if (/contradict|opposite|reversed/.test(text)) return 'contradiction';
   return 'semantic_other';
