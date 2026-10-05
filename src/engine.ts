@@ -4,12 +4,12 @@ import { evidenceIntegrityFailureSummary, evidenceIntegrityPass, evidenceIntegri
 import { createTranslationContract, errorDeltaGuidance, semanticErrorDeltas, selectCorrectionRoute, type AttemptRecord, type TransformationRun } from './integrity-control.js';
 import { canonicalLanguage, sameLanguage } from './language.js';
 import { decodeBatch, deterministicValidationError, encodeBatch, guidanceBlock, serializeMeaningBatch, translationInstruction, validateBatchStructure, type TranslationStrategy } from './quality.js';
-import { meaningRecord, SEMANTIC_PASS_SCORE, semanticPass, semanticVerdict } from './semantic.js';
+import { meaningRecord, reanalysisRecord, SEMANTIC_PASS_SCORE, semanticPass, semanticVerdict } from './semantic.js';
 
 export const PROFILE_VERSION = 'asteria-translation-v1';
 export type TranslationSegment = { id: string; text: string };
 export type TranslationRequest = { request_id: string; profile_version: string; target_language: string; source_language?: string; glossary_id?: string; segments: TranslationSegment[] };
-export type TranslationUsage = { provider: 'ai_core_qwen3'; model: string; validation_model: string; calls: number; input_tokens: number; output_tokens: number; external_api_calls: 0; validation_fallbacks: number; evidence_validations: number; semantic_validations: number; semantic_retries: number };
+export type TranslationUsage = { provider: 'ai_core_qwen3'; model: string; validation_model: string; calls: number; input_tokens: number; output_tokens: number; external_api_calls: 0; validation_fallbacks: number; evidence_validations: number; semantic_validations: number; semantic_retries: number; source_reanalyses: number };
 export type TranslationResponse = { request_id: string; profile_version: string; source_language?: string; detected_source_language?: string; target_language: string; language_capability_status: 'NOT_VERIFIED'; segments: TranslationSegment[]; usage: TranslationUsage };
 export type EngineConfig = { aiCore: AiCoreConfig; timeoutMs: number };
 type BatchResult = EngineResult & { bodies: string[] };
@@ -62,7 +62,7 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
   const request = parseRequest(input);
   const contract = createTranslationContract(request.targetLanguage, request.sourceLanguage);
   const active = request.segments.map((segment, index) => ({ segment, index })).filter(({ segment }) => segment.text.trim());
-  const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, evidenceValidations: 0, semanticValidations: 0, semanticRetries: 0 };
+  const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, evidenceValidations: 0, semanticValidations: 0, semanticRetries: 0, sourceReanalyses: 0 };
   const add = (engine: EngineResult) => {
     totals.calls += 1;
     totals.inputTokens += engine.inputTokens;
@@ -112,22 +112,43 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
       const firstRoute = selectCorrectionRoute(firstDeltas, 1);
       attempts.push({ attempt: 1, route: firstRoute, errors: firstDeltas });
 
-      if (firstRoute === 'REANALYZE') {
-        throw codedError('TRANSLATION_REANALYSIS_REQUIRED', `Translation candidate indicates unresolved or guessed meaning that requires source reanalysis before another generation: ${errorDeltaGuidance(firstDeltas)}`, false, 422);
-      }
-      if (firstRoute !== 'FRESH_REGENERATE' || run.contract.maxSemanticRegenerations < 1) {
+      if (firstRoute !== 'FRESH_REGENERATE' && firstRoute !== 'REANALYZE') {
         throw codedError('TRANSLATION_INTEGRITY_ROUTE_UNAVAILABLE', `Translation integrity route ${firstRoute} is not executable in the current translation phase.`, false, 422);
       }
+      if (run.contract.maxSemanticRegenerations < 1) {
+        throw codedError('TRANSLATION_INTEGRITY_ROUTE_UNAVAILABLE', 'Semantic regeneration budget is exhausted.', false, 422);
+      }
 
-      totals.semanticRetries += 1;
       const guidanceParts = [errorDeltaGuidance(firstDeltas)].filter(Boolean);
+      let acceptedSourceRecord = sourceMeaning.record;
+
+      if (firstRoute === 'REANALYZE') {
+        if (run.contract.maxSourceReanalyses < 1) throw codedError('TRANSLATION_REANALYSIS_REQUIRED', 'Source reanalysis budget is exhausted.', false, 422);
+        totals.sourceReanalyses += 1;
+        const reanalysis = await reanalysisRecord(config.aiCore, originalBatch, errorDeltaGuidance(firstDeltas), config.timeoutMs);
+        add(reanalysis.result);
+        if (!sameLanguage(reanalysis.detectedLanguage, detectedSourceLanguage)) {
+          throw codedError('TRANSLATION_REANALYSIS_LANGUAGE_MISMATCH', `Source reanalysis changed detected language from ${detectedSourceLanguage} to ${reanalysis.detectedLanguage}.`, true, 502);
+        }
+        const reanalysisEvidence = await evidenceIntegrityVerdict(config.aiCore, originalBatch, reanalysis.graph, config.timeoutMs);
+        add(reanalysisEvidence.result);
+        totals.evidenceValidations += 1;
+        if (!evidenceIntegrityPass(reanalysisEvidence.verdict)) {
+          throw codedError('TRANSLATION_EVIDENCE_INTEGRITY_FAILED', `Reanalyzed source evidence is not safely grounded in ORIGINAL: ${evidenceIntegrityFailureSummary(reanalysisEvidence.verdict)}`, false, 422);
+        }
+        acceptedSourceRecord = reanalysis.record;
+        guidanceParts.push(`REANALYZED_SOURCE_EVIDENCE=${reanalysis.record}`);
+      }
+
       if (!first.verdict.targetLanguageMatch) guidanceParts.push(`Candidate prose must be translated into requested target language ${request.targetLanguage}; do not leave source prose untranslated.`);
       if (!guidanceParts.length) guidanceParts.push(`Semantic score ${first.verdict.score.toFixed(3)} was below ${SEMANTIC_PASS_SCORE}. Preserve every material meaning exactly.`);
+
+      totals.semanticRetries += 1;
       const retry = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, 'semantic_retry', config.timeoutMs, guidanceParts.join('\n'));
       add(retry);
       const retryMeaning = await meaningRecord(config.aiCore, serializeMeaningBatch(retry.bodies), config.timeoutMs);
       add(retryMeaning.result);
-      const second = await semanticVerdict(config.aiCore, sourceMeaning.record, retryMeaning.record, request.targetLanguage, config.timeoutMs);
+      const second = await semanticVerdict(config.aiCore, acceptedSourceRecord, retryMeaning.record, request.targetLanguage, config.timeoutMs);
       add(second.result);
       totals.semanticValidations += 1;
 
@@ -168,7 +189,8 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
       validation_fallbacks: totals.validationFallbacks,
       evidence_validations: totals.evidenceValidations,
       semantic_validations: totals.semanticValidations,
-      semantic_retries: totals.semanticRetries
+      semantic_retries: totals.semanticRetries,
+      source_reanalyses: totals.sourceReanalyses
     }
   };
 }

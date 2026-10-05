@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createTranslationContract, errorDeltaGuidance, semanticErrorDeltas, selectCorrectionRoute } from './integrity-control.js';
 
-test('translation contract keeps original authority and one semantic regeneration', () => {
+test('translation contract keeps original authority and bounded regeneration/reanalysis', () => {
   assert.deepEqual(createTranslationContract('ja', 'en'), {
     mode: 'translate',
     sourceLanguage: 'en',
     targetLanguage: 'ja',
     preserveOriginalAuthority: true,
-    maxSemanticRegenerations: 1
+    maxSemanticRegenerations: 1,
+    maxSourceReanalyses: 1
   });
 });
 

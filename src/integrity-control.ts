@@ -28,6 +28,7 @@ export type TransformationContract = {
   targetLanguage: string;
   preserveOriginalAuthority: true;
   maxSemanticRegenerations: 1;
+  maxSourceReanalyses: 1;
 };
 
 export type MeaningEvidenceGraph = {
@@ -67,7 +68,8 @@ export function createTranslationContract(targetLanguage: string, sourceLanguage
     ...(sourceLanguage ? { sourceLanguage } : {}),
     targetLanguage,
     preserveOriginalAuthority: true,
-    maxSemanticRegenerations: 1
+    maxSemanticRegenerations: 1,
+    maxSourceReanalyses: 1
   };
 }
 
