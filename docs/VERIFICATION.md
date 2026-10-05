@@ -8,7 +8,18 @@ CI also syntax-checks both benchmark scripts. Source/CI success proves only repo
 
 Before same-language canonical rewrite or native/style work, the current phase must prove that cross-language transformation preserves meaning and protected values and fails closed when correctness cannot be established.
 
-Repository/CI gates currently cover request validation, protected-token/structure validation, source-language mismatch before translation generation, semantic-record validation, semantic retry from ORIGINAL input, target-language rejection, model identity, loopback-only AI Core, and second-failure fail-closed behavior.
+Repository/CI gates currently cover request validation, protected-token/structure validation, source-language mismatch before translation generation, semantic-record validation, target-language rejection, model identity, loopback-only AI Core, and second-failure fail-closed behavior.
+
+The first Language Integrity Architecture v3 control slice is now source-implemented:
+
+- `TransformationContract`, `TransformationRun`, `MeaningEvidenceGraph`, `AttemptRecord`, typed `ErrorDelta`, and bounded correction-route contracts exist in source;
+- semantic-verdict failures are classified into critical error categories including omission, unsupported addition, contradiction, polarity, condition/exception, modality, entity/reference, quantity/time, wrong language, literal/structure and unresolved guessing;
+- ordinary semantic failure routes to one `FRESH_REGENERATE` attempt anchored to ORIGINAL input;
+- unresolved or guessed ambiguity routes to `REANALYZE`; because executable source reanalysis is not implemented yet, the current engine fails closed with `TRANSLATION_REANALYSIS_REQUIRED` rather than blindly regenerating;
+- a second semantic failure routes to `FAIL_CLOSED`;
+- target-language retry guidance retains the concrete requested target language.
+
+These source behaviors are acceptance only at `CI_EXACT_SHA` when the final head passes `npm run verify`. They do not prove real Qwen3/Granite runtime quality.
 
 Live service acceptance uses `scripts/service-benchmark.py benchmarks/regression-corpus.seed.jsonl` against the real asteria service backed by Qwen3 + Granite. The current 13-case seed covers multilingual/adversarial meaning risks including negation, prohibitions, conditions, exceptions, quantities, deadlines, ordering, permissions, low-resource Swahili, RTL/CJK scripts, and embedded prompt-injection text.
 
@@ -16,10 +27,10 @@ The service benchmark is a fail-closed execution gate: any HTTP/contract failure
 
 ## Architecture v3 integrity evidence
 
-The adopted Language Integrity architecture adds verification dimensions beyond the current executable baseline. Source implementation and acceptance must separately prove:
+The adopted Language Integrity architecture still has verification dimensions that are not yet fully executable. Source implementation and acceptance must separately prove:
 
 - Original Input remains the authority and is not silently replaced by an intermediate representation;
-- Meaning Evidence Graph does not add unsupported facts or silently resolve ambiguity;
+- Meaning Evidence Graph is actually constructed from source evidence and does not add unsupported facts or silently resolve ambiguity;
 - omission, unsupported addition and contradiction detection;
 - polarity/negation preservation;
 - condition and exception preservation;
@@ -27,12 +38,12 @@ The adopted Language Integrity architecture adds verification dimensions beyond 
 - entity, reference/coreference, quantity and temporal preservation;
 - unresolved/ambiguous meaning is not guessed;
 - Transformation Contract invariants survive generation;
-- ErrorDelta routes the failure to the correct bounded action: local fix, fresh regeneration, reanalysis or fail-closed;
+- executable `REANALYZE` performs bounded source reanalysis rather than only detecting the need for it;
 - repeated identical failures do not loop indefinitely;
 - memory reuse does not blindly copy prior output;
 - risk routing does not weaken correctness for simple-path inputs.
 
-These gates are **design-adopted but not yet source-implemented** unless and until exact-source evidence proves otherwise.
+Not yet source-complete: Meaning Evidence Graph construction/wiring, Risk Router, executable reanalysis, Language Intelligence Adapters, and persistent Attempt/Checkpoint/Failure Memory.
 
 ## Language Intelligence Adapter verification
 
