@@ -1,16 +1,28 @@
 # asteria
 
-`asteria` is the independent translation project for the G-ACE workspace. The runtime service name is `asteria-ai`.
+`asteria` is the semantic-preserving Language Transformation project for the G-ACE workspace. The runtime service name remains `asteria-ai`.
 
 ## Purpose
 
-asteria owns translation-specific AI execution, deterministic preservation, semantic verification, benchmarking, runtime boundaries, and its own TGserver ZERO P007 runtime producer. Product applications keep their own UI/domain mapping and send generic ordered segments.
+asteria exists to accurately read text in any language and transform it into the best expression in the same or another language **without changing material meaning**, with explicit verification before output is accepted.
+
+The completed product is intended to use one shared Meaning Integrity Core for:
+
+- cross-language translation;
+- same-language canonical rewrite;
+- later controlled style/native-expression transformation.
+
+The current implementation priority remains **cross-language translation correctness first**. Same-language rewrite and style/native optimization are follow-on modes and must not delay completion of the Translation Integrity Core.
+
+asteria owns language-transformation AI execution, deterministic preservation, semantic evidence/verification, benchmarking, runtime boundaries, and its TGserver ZERO P007 runtime producer. Product applications keep their own UI/domain mapping and send generic ordered segments.
 
 Migration source authority: Astera App Draft PR #72, source snapshot `169be9309695396b27f05e4f91fea4823ea5e8fc`.
 
 ## Current source contract
 
-- Qwen3 is the sole translator.
+Current implemented behavior is still the translation baseline while Architecture v3 is being introduced:
+
+- Qwen3 is the sole translator/generator.
 - Qwen3 independently records original/candidate meaning.
 - Granite judges semantic equivalence and requested target language.
 - AI Core Router is the only model path; loopback HTTP only.
@@ -23,9 +35,11 @@ Migration source authority: Astera App Draft PR #72, source snapshot `169be93096
 - non-empty `glossary_id` is reserved but currently returns `TRANSLATION_GLOSSARY_NOT_IMPLEMENTED`.
 - language capability is `NOT_VERIFIED` until measured; source/CI PASS is not universal-language correctness.
 
+Architecture v3 adds the design contracts for Original Authority, Meaning Evidence Graph, risk routing, Transformation Contract, bounded correction routing, Attempt/Failure evidence memory, and optional language-intelligence adapters. These are design-current but not yet fully implemented source behavior.
+
 ## Current completion phase
 
-The current phase is intentionally limited to meaning preservation, safety, and correctness before any native-fluency, locale, or style optimization.
+The current phase is intentionally limited to **Translation Integrity Core**: meaning preservation, safety, correctness and reproducible evidence before same-language canonical rewrite or native/style optimization.
 
 Source-side completion gates currently include:
 
@@ -41,21 +55,32 @@ These are repository/CI capabilities only until the same branch is exercised aga
 
 ## Architecture
 
+Current adopted design direction:
+
 ```text
-Consumer
-  -> /internal/v1/translate
-  -> request/profile/BCP47 validation
-  -> generic ordered {id,text} segments
-  -> deterministic protected-token + structure fence
-  -> AI Core Router 127.0.0.1:18080
-       -> Qwen3 translation
-       -> Qwen3 original semantic record
-       -> Qwen3 candidate semantic record
-       -> Granite independent verdict
-  -> semantic/target-language gate
-  -> translated segments or fail-closed error
-  -> bounded P007 runtime event sink (no translation content/secrets)
+Original Input / Context (Authority)
+  -> Surface Integrity Scan
+  -> Transformation Intent Contract
+  -> Risk Router
+  -> Meaning Acquisition
+       -> common semantic reading
+       -> targeted meaning-preserving projection when justified
+       -> optional Language Intelligence Adapter
+          -> Japanese reference: Deterministic Japanese Parser MCP
+  -> Meaning Evidence Graph
+  -> Evidence Integrity Gate
+  -> Transformation Planner
+  -> Qwen3 Controlled Generation
+  -> deterministic + Granite independent verification
+  -> Error Delta Router
+       -> PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED
+  -> Final Integrity Gate
+  -> accepted output
 ```
+
+The **Original Input remains the semantic authority**. `MeaningEvidenceGraph` is evidence extracted from the original and must never silently replace or override it. Unknown or ambiguous meaning is preserved as unresolved rather than guessed.
+
+The current executable translation path remains the existing `/internal/v1/translate` flow until Architecture v3 source implementation lands. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/DESIGN_DELTA.md`](docs/DESIGN_DELTA.md).
 
 asteria does not know Astera App's eight result keys.
 
@@ -68,6 +93,8 @@ All routes require `Authorization: Bearer <ASTERIA_INTERNAL_TOKEN>`.
 - `POST /internal/v1/translate`
 
 Translate request uses `request_id`, `profile_version`, BCP47 `target_language`, optional `source_language`, reserved `glossary_id`, and ordered `{id,text}` segments.
+
+Same-language transformation endpoints/modes are part of the adopted product architecture but are **not yet implemented** and must not be inferred from the current API.
 
 ## TGserver ZERO runtime logging
 
@@ -92,8 +119,16 @@ python3 -m py_compile scripts/raw-model-benchmark.py scripts/service-benchmark.p
 
 ## Runtime boundary
 
-No main merge, new model download, external provider change, production public cutover, or unrelated secret/provider mutation is part of the current safety/correctness phase.
+No main merge, new model download, external provider change, production public cutover, or unrelated secret/provider mutation is part of the current Translation Integrity phase.
 
 The existing server project is `/home/admin1/projects/asteria`; runtime/source synchronization and live verification are separate evidence gates from repository CI.
 
-See `docs/` for design, migration, verification, language capability, and TGserver ZERO usage.
+## Documentation
+
+- [`docs/DESIGN.md`](docs/DESIGN.md) — current architecture plus preserved migration baseline
+- [`docs/DESIGN_DELTA.md`](docs/DESIGN_DELTA.md) — adopted Language Integrity Architecture v3 decision and rationale
+- [`docs/LANGUAGE_CAPABILITY.md`](docs/LANGUAGE_CAPABILITY.md) — evidence boundary for language support
+- [`docs/VERIFICATION.md`](docs/VERIFICATION.md) — source/runtime/integrity acceptance gates
+- [`docs/MIGRATION_FROM_ASTERA_APP.md`](docs/MIGRATION_FROM_ASTERA_APP.md) — migration ownership boundary
+- [`docs/PROJECT_TREE.md`](docs/PROJECT_TREE.md) — navigation index
+- [`docs/TGSERVER_ZERO_DEVELOPMENT_EVIDENCE.md`](docs/TGSERVER_ZERO_DEVELOPMENT_EVIDENCE.md) — runtime logging evidence
