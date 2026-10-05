@@ -50,6 +50,7 @@ export type TransformationRun = {
   runId: string;
   original: readonly string[];
   contract: TransformationContract;
+  sourceEvidence: MeaningEvidenceGraph;
   attempts: readonly AttemptRecord[];
 };
 

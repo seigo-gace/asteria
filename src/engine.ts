@@ -73,10 +73,10 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
   if (active.length) {
     const originals = active.map(({ segment }) => segment.text);
     const attempts: AttemptRecord[] = [];
-    const run: TransformationRun = { runId: request.requestId, original: originals, contract, attempts };
     const sourceMeaning = await meaningRecord(config.aiCore, serializeMeaningBatch(originals), config.timeoutMs);
     add(sourceMeaning.result);
     detectedSourceLanguage = sourceMeaning.detectedLanguage;
+    const run: TransformationRun = { runId: request.requestId, original: originals, contract, sourceEvidence: sourceMeaning.graph, attempts };
     if (request.sourceLanguage && !sameLanguage(request.sourceLanguage, detectedSourceLanguage)) throw codedError('SOURCE_LANGUAGE_MISMATCH', `Detected source language ${detectedSourceLanguage} does not match requested ${request.sourceLanguage}.`, false, 422);
 
     let candidate: BatchResult;
