@@ -1,10 +1,10 @@
-# AsteriaAI
+# asteria
 
-AsteriaAI is the independent translation AI system for the G-ACE workspace, named after Asteria, the Greek goddess associated with the stars.
+`asteria` is the independent translation project for the G-ACE workspace. The runtime service name is `asteria-ai`.
 
 ## Purpose
 
-AsteriaAI owns translation-specific AI execution, deterministic preservation, semantic verification, benchmarking, and runtime boundaries. Product applications keep their own UI/domain mapping and send generic ordered segments.
+asteria owns translation-specific AI execution, deterministic preservation, semantic verification, benchmarking, runtime boundaries, and its own TGserver ZERO P007 runtime producer. Product applications keep their own UI/domain mapping and send generic ordered segments.
 
 Migration source authority: Astera App Draft PR #72, source snapshot `169be9309695396b27f05e4f91fea4823ea5e8fc`.
 
@@ -34,7 +34,8 @@ Source-side completion gates currently include:
 - retry from ORIGINAL input only;
 - fail-closed source-language mismatch and invalid semantic-language detection;
 - a 13-case multilingual/adversarial regression seed covering negation, prohibitions, conditions, exceptions, quantities, deadlines, ordering, permissions, mixed scripts, low-resource Swahili, and embedded prompt-injection text;
-- a service benchmark that exits non-zero on HTTP/contract failure, empty translation, protected-literal loss, or any external translation API call.
+- a service benchmark that exits non-zero on HTTP/contract failure, empty translation, protected-literal loss, or any external translation API call;
+- a bounded fail-open TGserver ZERO P007 runtime producer for `asteria_started`, `translate_succeeded`, and `translate_failed`.
 
 These are repository/CI capabilities only until the same branch is exercised against the real Qwen3 + Granite runtime. The regression seed remains `SEED_NOT_ACCEPTANCE_AUTHORITY` until reviewed and live evidence is captured.
 
@@ -53,9 +54,10 @@ Consumer
        -> Granite independent verdict
   -> semantic/target-language gate
   -> translated segments or fail-closed error
+  -> bounded P007 runtime event sink (no translation content/secrets)
 ```
 
-AsteriaAI does not know Astera App's eight result keys.
+asteria does not know Astera App's eight result keys.
 
 ## Internal API
 
@@ -66,6 +68,17 @@ All routes require `Authorization: Bearer <ASTERIA_INTERNAL_TOKEN>`.
 - `POST /internal/v1/translate`
 
 Translate request uses `request_id`, `profile_version`, BCP47 `target_language`, optional `source_language`, reserved `glossary_id`, and ordered `{id,text}` segments.
+
+## TGserver ZERO runtime logging
+
+Project identity is `P007` / stream `default`. The producer sends only bounded lifecycle metadata through canonical `POST /ingest/bulk` and never sends translation text, request bodies, bearer tokens, AI Core keys, arbitrary exception messages, or model/provider response bodies. TGserver unavailability is fail-open and does not change translation API semantics.
+
+```text
+TGSERVER_LOG_URL=http://127.0.0.1:3000
+TGSERVER_LOG_TIMEOUT_MS=1500
+```
+
+The central Reader path for `seigo-gace/asteria` / P007 is already proven from CHAT through TGserver ZERO, including indexed new-schema evidence and Telegram raw correlation. Runtime events from the current translation branch still require exact-head deployment/readback before being marked current-runtime PASS.
 
 ## Development
 
@@ -79,8 +92,8 @@ python3 -m py_compile scripts/raw-model-benchmark.py scripts/service-benchmark.p
 
 ## Runtime boundary
 
-No merge, deploy, new model download, external provider, production switch, Telegram topic provisioning, or secret mutation is part of the initial source migration or the current safety/correctness hardening phase.
+No main merge, new model download, external provider change, production public cutover, or unrelated secret/provider mutation is part of the current safety/correctness phase.
 
-TGserver ZERO source registration is being handled separately as `P007` / stream `default`; until its registration PR is merged and topics/producer/real-log E2E are complete, Runtime log search is not active.
+The existing server project is `/home/admin1/projects/asteria`; runtime/source synchronization and live verification are separate evidence gates from repository CI.
 
 See `docs/` for design, migration, verification, language capability, and TGserver ZERO usage.
