@@ -10,9 +10,12 @@ Before same-language canonical rewrite or native/style work, the current phase m
 
 Repository/CI gates currently cover request validation, protected-token/structure validation, source-language mismatch before translation generation, semantic-record validation, target-language rejection, model identity, loopback-only AI Core, and second-failure fail-closed behavior.
 
-The first Language Integrity Architecture v3 control slice is now source-implemented:
+The first Language Integrity Architecture v3 source slices now cover:
 
-- `TransformationContract`, `TransformationRun`, `MeaningEvidenceGraph`, `AttemptRecord`, typed `ErrorDelta`, and bounded correction-route contracts exist in source;
+- typed `TransformationContract`, `TransformationRun`, `MeaningEvidenceGraph`, `AttemptRecord`, `ErrorDelta`, and bounded correction-route contracts;
+- source semantic records normalized into a typed `MeaningEvidenceGraph` containing detected language, claims, constraints, conditions, entities, quantities, and uncertainties;
+- the typed graph is produced from the existing semantic-recorder result, so the graph itself adds no additional AI call;
+- ORIGINAL text remains the semantic authority and is stored separately from source evidence in `TransformationRun`;
 - semantic-verdict failures are classified into critical error categories including omission, unsupported addition, contradiction, polarity, condition/exception, modality, entity/reference, quantity/time, wrong language, literal/structure and unresolved guessing;
 - ordinary semantic failure routes to one `FRESH_REGENERATE` attempt anchored to ORIGINAL input;
 - unresolved or guessed ambiguity routes to `REANALYZE`; because executable source reanalysis is not implemented yet, the current engine fails closed with `TRANSLATION_REANALYSIS_REQUIRED` rather than blindly regenerating;
@@ -25,25 +28,20 @@ Live service acceptance uses `scripts/service-benchmark.py benchmarks/regression
 
 The service benchmark is a fail-closed execution gate: any HTTP/contract failure, empty translation, required protected-literal loss, or non-zero `external_api_calls` produces `gate=FAIL` and process exit 1. A benchmark PASS still does not promote the corpus to human-reviewed language-pair authority; every seed row remains `SEED_NOT_ACCEPTANCE_AUTHORITY` until separately reviewed.
 
-## Architecture v3 integrity evidence
+## Architecture v3 remaining evidence
 
-The adopted Language Integrity architecture still has verification dimensions that are not yet fully executable. Source implementation and acceptance must separately prove:
+The following dimensions remain not source-complete or not acceptance-proven:
 
-- Original Input remains the authority and is not silently replaced by an intermediate representation;
-- Meaning Evidence Graph is actually constructed from source evidence and does not add unsupported facts or silently resolve ambiguity;
-- omission, unsupported addition and contradiction detection;
-- polarity/negation preservation;
-- condition and exception preservation;
-- modality/deontic-strength preservation;
-- entity, reference/coreference, quantity and temporal preservation;
-- unresolved/ambiguous meaning is not guessed;
-- Transformation Contract invariants survive generation;
-- executable `REANALYZE` performs bounded source reanalysis rather than only detecting the need for it;
-- repeated identical failures do not loop indefinitely;
-- memory reuse does not blindly copy prior output;
-- risk routing does not weaken correctness for simple-path inputs.
+- evidence-integrity validation that independently checks the Meaning Evidence Graph against ORIGINAL rather than trusting the recorder output;
+- Risk Router;
+- executable `REANALYZE` source analysis;
+- Deterministic Japanese Parser MCP and other Language Intelligence Adapter integration;
+- persistent Attempt/Checkpoint/Failure Memory;
+- memory reuse that cannot blindly copy prior output;
+- repeated-run semantic stability;
+- real runtime coverage across language classes and adversarial meaning cases.
 
-Not yet source-complete: Meaning Evidence Graph construction/wiring, Risk Router, executable reanalysis, Language Intelligence Adapters, and persistent Attempt/Checkpoint/Failure Memory.
+Meaning Evidence Graph existence is therefore **not** proof that its content is correct. It is a typed evidence container whose correctness still requires independent gates and runtime/human evidence.
 
 ## Language Intelligence Adapter verification
 

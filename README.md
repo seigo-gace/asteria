@@ -20,7 +20,7 @@ Migration source authority: Astera App Draft PR #72, source snapshot `169be93096
 
 ## Current source contract
 
-Current implemented behavior is the translation baseline with the first Architecture v3 control path wired into runtime orchestration:
+Current implemented behavior is the translation baseline with the first Architecture v3 control and evidence path wired into runtime orchestration:
 
 - Qwen3 is the sole translator/generator.
 - Qwen3 independently records original/candidate meaning.
@@ -34,12 +34,14 @@ Current implemented behavior is the translation baseline with the first Architec
 - invalid semantic-recorder `detected_language` values fail closed.
 - non-empty `glossary_id` is reserved but currently returns `TRANSLATION_GLOSSARY_NOT_IMPLEMENTED`.
 - language capability is `NOT_VERIFIED` until measured; source/CI PASS is not universal-language correctness.
+- each source semantic record is normalized into a typed `MeaningEvidenceGraph` containing detected language, claims, constraints, conditions, entities, quantities, and uncertainties while ORIGINAL text remains the semantic authority.
+- this graph reuses the existing semantic-recorder call; it does **not** add another AI call.
 - semantic failures are converted to typed critical `ErrorDelta` values and routed through bounded Architecture v3 correction control.
 - ordinary semantic differences route to one ORIGINAL-anchored `FRESH_REGENERATE` attempt.
-- unresolved/guessed ambiguity routes to `REANALYZE`; because source reanalysis is not yet implemented, the current runtime fails closed instead of blindly regenerating.
+- unresolved/guessed ambiguity routes to `REANALYZE`; because executable source reanalysis is not yet implemented, the current runtime fails closed instead of blindly regenerating.
 - a second semantic failure routes to `FAIL_CLOSED`.
 
-`src/integrity-control.ts` defines typed `TransformationContract`, `TransformationRun`, `AttemptRecord`, `MeaningEvidenceGraph`, `ErrorDelta`, and `PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED`. `src/engine.ts` now uses the typed delta/route layer for semantic retry decisions without changing the public translation API.
+`src/integrity-control.ts` defines typed `TransformationContract`, `TransformationRun`, `AttemptRecord`, `MeaningEvidenceGraph`, `ErrorDelta`, and `PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED`. `src/semantic.ts` materializes the source evidence graph from the existing semantic record, and `src/engine.ts` attaches it to the current TransformationRun and uses typed delta/route decisions for semantic retry handling without changing the public translation API.
 
 ## Current completion phase
 
@@ -52,6 +54,7 @@ Source-side completion gates currently include:
 - retry from ORIGINAL input only;
 - fail-closed source-language mismatch and invalid semantic-language detection;
 - typed Architecture v3 integrity-control contracts and deterministic error-delta routing wired into semantic retry behavior;
+- typed source `MeaningEvidenceGraph` construction without an additional model call;
 - no blind regeneration when the validator reports unresolved/guessed ambiguity;
 - a 13-case multilingual/adversarial regression seed covering negation, prohibitions, conditions, exceptions, quantities, deadlines, ordering, permissions, mixed scripts, low-resource Swahili, and embedded prompt-injection text;
 - a service benchmark that exits non-zero on HTTP/contract failure, empty translation, protected-literal loss, or any external translation API call;
@@ -86,7 +89,7 @@ Original Input / Context (Authority)
 
 The **Original Input remains the semantic authority**. `MeaningEvidenceGraph` is evidence extracted from the original and must never silently replace or override it. Unknown or ambiguous meaning is preserved as unresolved rather than guessed.
 
-The executable `/internal/v1/translate` path now uses the first typed Architecture v3 failure-routing slice. Risk routing, evidence-graph construction, actual REANALYZE execution, language-intelligence adapters, same-language canonicalization, and memory/checkpoint persistence remain later source units. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/DESIGN_DELTA.md`](docs/DESIGN_DELTA.md).
+The executable `/internal/v1/translate` path now uses the first typed Architecture v3 evidence/failure-routing slices. Risk routing, executable REANALYZE, Language Intelligence Adapters, same-language canonicalization, and persistent Attempt/Checkpoint/Failure Memory remain later source units. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/DESIGN_DELTA.md`](docs/DESIGN_DELTA.md).
 
 asteria does not know Astera App's eight result keys.
 
