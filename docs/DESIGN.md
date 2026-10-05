@@ -3,73 +3,70 @@
 ## Current Architecture — Language Integrity v3
 
 ### Project responsibility
-asteria is a semantic-preserving Language Transformation Engine. Its project purpose is to accurately read text in any language and transform it into the best expression in the same or another language while preserving material meaning and verifying that preservation before acceptance.
+asteria is a semantic-preserving Language Transformation Engine. Its purpose is to accurately read text in any language and transform it into the best expression in the same or another language while preserving material meaning and verifying that preservation before acceptance.
 
-The current implementation priority is still cross-language translation correctness. Same-language canonical rewrite and later style/native-expression transformation are follow-on modes on the same Meaning Integrity Core.
-
-asteria does not own consumer UI, billing, history, or application-specific result schemas.
+Current implementation priority remains cross-language translation correctness. Same-language canonical rewrite and later style/native-expression transformation are follow-on modes on the same Meaning Integrity Core. asteria does not own consumer UI, billing, history, or application-specific result schemas.
 
 ### Authority model
 Two distinct layers are mandatory:
 
 1. **Original Input / Context** — immutable semantic authority.
-2. **Meaning Evidence Graph** — structured evidence extracted from the original; it may constrain generation and verification but never silently replaces the original.
+2. **Meaning Evidence Graph** — structured evidence extracted from ORIGINAL; it constrains generation/verification but never silently replaces ORIGINAL.
 
-Unknown, ambiguous, conflicting or insufficiently supported meaning remains unresolved rather than being guessed.
+Unknown, ambiguous, conflicting or insufficiently supported meaning remains unresolved rather than guessed.
 
-### Target processing flow
-1. Surface integrity scan: language/script, numbers, dates, money, code, URLs, placeholders and other protected invariants.
-2. Transformation intent contract: target language/mode and what may or may not change.
-3. Risk router: simple, complex, high-risk or ambiguous path.
-4. Meaning acquisition:
-   - common LLM semantic reading;
-   - targeted meaning-preserving projection only when needed;
-   - optional language-intelligence adapter when evidence shows the common core is insufficient.
-5. Build `MeaningEvidenceGraph` for entities, predicates, arguments, polarity, modality, conditions, exceptions, causality, comparison, quantities, temporal relations, references, discourse and unresolved items.
-6. Evidence integrity gate rejects unsupported additions, contradictions and invented resolution.
-7. Transformation planner selects the minimum evidence required for the requested output.
-8. Qwen3 controlled generation from Original + selected evidence + transformation contract.
-9. Multi-axis verification:
-   - deterministic invariant gate;
-   - candidate semantic record;
-   - Granite independent semantic comparison;
-   - requested language/structure validation;
-   - unresolved-meaning handling validation.
-10. `ErrorDelta` routing:
-   - `PASS`;
-   - `LOCAL_FIX` for bounded local repair;
-   - `FRESH_REGENERATE` from Original;
-   - `REANALYZE` when source understanding is the problem;
-   - `FAIL_CLOSED` when correctness cannot be established.
-11. Final integrity gate before output acceptance.
+### Executable processing flow
+1. Surface integrity scan protects numbers, dates, money, code, URLs, placeholders and other invariants.
+2. Transformation intent contract fixes requested mode/language and preservation constraints.
+3. Deterministic low-cost Risk Router classifies active input as `simple / complex / high-risk / ambiguous` using explicit surface signals.
+   - Trace inputs include segment/context shape, script mix, negation, conditions/exceptions, modality, protected quantities/values, reference context, explicit ambiguity and code-point length.
+   - No AI call is used for routing.
+   - No numeric long-text threshold is invented without Benchmark Evidence; length is currently trace only.
+   - `high-risk` / `ambiguous` select `risk_focused` first generation.
+   - `simple` / `complex` preserve the existing controlled document generation path.
+   - Mandatory Evidence Integrity, deterministic preservation and semantic verification are never bypassed by a lower risk class.
+4. Meaning acquisition uses the common Qwen semantic record. Targeted projection/normalization and Language Intelligence Adapters remain later selective stages.
+5. Build `MeaningEvidenceGraph` for detected language, claims, constraints, conditions, entities, quantities and uncertainties.
+6. Evidence Integrity Gate independently rejects unsupported additions, contradictions and invented ambiguity resolution against raw ORIGINAL.
+7. Qwen3 controlled generation follows the Risk Router-selected strategy.
+8. Multi-axis verification applies deterministic invariants, candidate semantic record, Granite semantic comparison, requested language validation and unresolved-meaning handling.
+9. `ErrorDelta` routing selects `PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED`.
+10. `REANALYZE` uses only ORIGINAL + verifier ErrorDelta in fresh context, excludes the prior candidate, revalidates rebuilt evidence, and allows at most one ORIGINAL-anchored regeneration.
+11. Final integrity gate precedes acceptance.
 
-### Core data contracts planned for source implementation
+### Current data contracts
 - `TransformationRun`
 - `MeaningEvidenceGraph`
 - `TransformationContract`
 - `AttemptRecord`
 - `ErrorDelta`
+- `RiskProfile`
 
-The architecture keeps meaning and surface-form/style evaluation separate. Style or naturalness may never weaken the semantic-preservation gate. Same-language transformation must allow `no-op` when rewriting would add risk without meaningful benefit.
+`TransformationRun` stores its deterministic RiskProfile alongside ORIGINAL, contract, source evidence and attempts. Router trace must not become semantic authority; risk labels and signals are attention/routing metadata only.
+
+### Risk Router boundary
+The Router is deliberately conservative and deterministic. Current source-complete effect is selective generation control without added model calls: meaning-sensitive inputs receive stronger preservation instructions while ordinary inputs retain the lighter existing path. The Router does **not** yet claim source normalization, parser selection, language-specific adapter routing, or proven quality benefit across languages. Those require separate source units and A/B evidence.
+
+The architecture keeps meaning and surface-form/style evaluation separate. Style/naturalness may never weaken semantic-preservation gates. Same-language transformation must allow `no-op` when rewriting would add risk without meaningful benefit.
 
 ### Language Intelligence Adapter boundary
 The common core is primary. Language-specific adapters are added only when repeatable evidence proves a language phenomenon is not handled adequately by the common path.
 
-The first reference implementation is Deterministic Japanese Parser MCP. Its MeaningGraph evidence may be mapped into `MeaningEvidenceGraph` for high-risk Japanese inputs and for Japanese-output verification. DJPMCP is not the universal core and is not a translation model.
+The first reference implementation is Deterministic Japanese Parser MCP. Its MeaningGraph may later map into `MeaningEvidenceGraph` for selected high-risk Japanese inputs/output verification. DJPMCP is not the universal core and is not a translation model.
 
 ### Evidence / memory control
 Reuse from debugAI and related G-ACE control assets applies at the contract level:
 
 - AI output is not evidence by itself;
-- attempts, checkpoints, verifier results and failure reasons are stored separately;
-- failure memory reuses evidence and failure patterns, not an old answer blindly;
+- attempts, checkpoints, verifier results and failure reasons are separated;
+- failure memory reuses evidence/failure patterns, not an old answer blindly;
 - repeated identical failed attempts are not allowed;
-- source/CI/runtime/production evidence remain separate;
-- runtime PASS is not AI correctness and test PASS is not universal language correctness.
+- Source/CI/Runtime/Production evidence remain separate;
+- Runtime PASS is not AI correctness and Test PASS is not universal language correctness.
 
 ### Current model roles
-- Qwen3: sole current translator/generator and semantic recorder.
-- Granite 4.2 8B: independent semantic-equivalence / requested-language verdict; never translation fallback.
+- Qwen3: sole current translator/generator, semantic recorder and bounded source reanalyst.
+- Granite 4.2 8B: independent source-evidence integrity and semantic-equivalence/requested-language judge; never translation fallback.
 - AI Core Router: only current model access path.
 
 Model-role changes require separate evidence and are not implied by this design update.

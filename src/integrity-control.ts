@@ -1,3 +1,5 @@
+import type { RiskProfile } from './risk-router.js';
+
 export type TransformationMode = 'translate' | 'canonicalize' | 'style';
 
 export type ErrorDeltaKind =
@@ -51,6 +53,7 @@ export type TransformationRun = {
   runId: string;
   original: readonly string[];
   contract: TransformationContract;
+  risk: RiskProfile;
   sourceEvidence: MeaningEvidenceGraph;
   attempts: readonly AttemptRecord[];
 };
