@@ -19,8 +19,9 @@ test('semantic differences become typed critical error deltas', () => {
     targetLanguageMatch: false,
     criticalDifferences: ['negation removed', 'deadline changed from 2026-10-01 to 2026-10-02']
   });
-  assert.deepEqual(deltas.map((delta) => delta.kind), ['wrong_language', 'omission', 'quantity_time']);
+  assert.deepEqual(deltas.map((delta) => delta.kind), ['wrong_language', 'polarity', 'quantity_time']);
   assert.match(errorDeltaGuidance(deltas), /\[wrong_language\]/);
+  assert.match(errorDeltaGuidance(deltas), /\[polarity\]/);
   assert.match(errorDeltaGuidance(deltas), /\[quantity_time\]/);
 });
 
