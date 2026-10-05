@@ -11,9 +11,12 @@ const MEANING_EN = JSON.stringify({ detected_language: 'en', claims: ['same mean
 type RequestBody = { model: string; messages: Array<{ role: string; content: string }> };
 function body(init: RequestInit | undefined): RequestBody { return JSON.parse(String(init?.body)) as RequestBody; }
 function user(request: RequestBody): string { return request.messages.find((item) => item.role === 'user')?.content ?? ''; }
+function system(request: RequestBody): string { return request.messages.find((item) => item.role === 'system')?.content ?? ''; }
 function translation(request: RequestBody): boolean { return request.model === QWEN && user(request).includes('BEGIN_BATCH'); }
+function evidenceGate(request: RequestBody): boolean { return system(request).includes('evidence-integrity judge'); }
 function response(model: string, content: string): Response { return new Response(JSON.stringify({ model, choices: [{ message: { content } }], usage: { prompt_tokens: 12, completion_tokens: 8 } }), { status: 200, headers: { 'content-type': 'application/json' } }); }
 function pass(): string { return JSON.stringify({ equivalent: true, score: 1, target_language_match: true, critical_differences: [] }); }
+function evidencePass(): string { return JSON.stringify({ valid: true, score: 1, unsupported_evidence: [], contradictions: [], invented_resolutions: [] }); }
 function req(): Record<string, unknown> { return { request_id: 'integrity-1', profile_version: PROFILE_VERSION, source_language: 'en', target_language: 'ja', segments: [{ id: 's1', text: 'Do not publish this before 2026-12-31.' }] }; }
 
 test('semantic retry is driven by typed error-delta guidance and restarts from original', async () => {
@@ -33,6 +36,7 @@ test('semantic retry is driven by typed error-delta guidance and restarts from o
       return response(QWEN_RESPONSE, batch);
     }
     if (request.model === QWEN) return response(QWEN_RESPONSE, MEANING_EN);
+    if (evidenceGate(request)) return response(GRANITE_RESPONSE, evidencePass());
     verdicts += 1;
     return response(GRANITE_RESPONSE, verdicts === 1 ? JSON.stringify({ equivalent: false, score: 0.6, target_language_match: true, critical_differences: ['negation removed'] }) : pass());
   };
@@ -40,6 +44,7 @@ test('semantic retry is driven by typed error-delta guidance and restarts from o
     const out = await translateSegments(req(), CONFIG);
     assert.equal(translations, 2);
     assert.equal(verdicts, 2);
+    assert.equal(out.usage.evidence_validations, 1);
     assert.equal(out.usage.semantic_retries, 1);
   } finally {
     globalThis.fetch = old;
@@ -58,6 +63,7 @@ test('unsupported ambiguity guessing routes to reanalysis and does not blindly r
       return response(QWEN_RESPONSE, batch);
     }
     if (request.model === QWEN) return response(QWEN_RESPONSE, MEANING_EN);
+    if (evidenceGate(request)) return response(GRANITE_RESPONSE, evidencePass());
     verdicts += 1;
     return response(GRANITE_RESPONSE, JSON.stringify({ equivalent: false, score: 0.7, target_language_match: true, critical_differences: ['ambiguous referent was guessed without evidence'] }));
   };
@@ -65,6 +71,32 @@ test('unsupported ambiguity guessing routes to reanalysis and does not blindly r
     await assert.rejects(() => translateSegments(req(), CONFIG), (error: unknown) => (error as { code?: string }).code === 'TRANSLATION_REANALYSIS_REQUIRED');
     assert.equal(translations, 1);
     assert.equal(verdicts, 1);
+  } finally {
+    globalThis.fetch = old;
+  }
+});
+
+test('unsupported source evidence fails closed before translation generation', async () => {
+  const old = globalThis.fetch;
+  let translations = 0;
+  let evidenceChecks = 0;
+  globalThis.fetch = async (_input, init) => {
+    const request = body(init);
+    if (translation(request)) {
+      translations += 1;
+      throw new Error('translation must not run');
+    }
+    if (request.model === QWEN) return response(QWEN_RESPONSE, MEANING_EN);
+    if (evidenceGate(request)) {
+      evidenceChecks += 1;
+      return response(GRANITE_RESPONSE, JSON.stringify({ valid: false, score: 0.2, unsupported_evidence: ['Evidence invented approval.'], contradictions: [], invented_resolutions: [] }));
+    }
+    return response(GRANITE_RESPONSE, pass());
+  };
+  try {
+    await assert.rejects(() => translateSegments(req(), CONFIG), (error: unknown) => (error as { code?: string }).code === 'TRANSLATION_EVIDENCE_INTEGRITY_FAILED');
+    assert.equal(evidenceChecks, 1);
+    assert.equal(translations, 0);
   } finally {
     globalThis.fetch = old;
   }

@@ -24,7 +24,7 @@ Current implemented behavior is the translation baseline with the first Architec
 
 - Qwen3 is the sole translator/generator.
 - Qwen3 independently records original/candidate meaning.
-- Granite judges semantic equivalence and requested target language.
+- Granite independently checks the source evidence graph against ORIGINAL, then judges translation semantic equivalence and requested target language.
 - AI Core Router is the only model path; loopback HTTP only.
 - external translation API fallback = 0.
 - protected tokens, section order, Markdown shape, line shape and information volume are deterministic gates.
@@ -35,13 +35,15 @@ Current implemented behavior is the translation baseline with the first Architec
 - non-empty `glossary_id` is reserved but currently returns `TRANSLATION_GLOSSARY_NOT_IMPLEMENTED`.
 - language capability is `NOT_VERIFIED` until measured; source/CI PASS is not universal-language correctness.
 - each source semantic record is normalized into a typed `MeaningEvidenceGraph` containing detected language, claims, constraints, conditions, entities, quantities, and uncertainties while ORIGINAL text remains the semantic authority.
-- this graph reuses the existing semantic-recorder call; it does **not** add another AI call.
+- graph construction reuses the existing semantic-recorder call; it does **not** add another Qwen call.
+- before translation generation, an independent Evidence Integrity Gate compares raw ORIGINAL with the typed source graph and rejects unsupported additions, contradictions, or invented ambiguity resolution.
+- the Evidence Integrity Gate adds one local Granite validation call for every non-empty translation request that passes source-language validation; usage reports it separately as `evidence_validations`.
 - semantic failures are converted to typed critical `ErrorDelta` values and routed through bounded Architecture v3 correction control.
 - ordinary semantic differences route to one ORIGINAL-anchored `FRESH_REGENERATE` attempt.
 - unresolved/guessed ambiguity routes to `REANALYZE`; because executable source reanalysis is not yet implemented, the current runtime fails closed instead of blindly regenerating.
 - a second semantic failure routes to `FAIL_CLOSED`.
 
-`src/integrity-control.ts` defines typed `TransformationContract`, `TransformationRun`, `AttemptRecord`, `MeaningEvidenceGraph`, `ErrorDelta`, and `PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED`. `src/semantic.ts` materializes the source evidence graph from the existing semantic record, and `src/engine.ts` attaches it to the current TransformationRun and uses typed delta/route decisions for semantic retry handling without changing the public translation API.
+`src/integrity-control.ts` defines typed `TransformationContract`, `TransformationRun`, `AttemptRecord`, `MeaningEvidenceGraph`, `ErrorDelta`, and `PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED`. `src/semantic.ts` materializes the source evidence graph from the existing semantic record. `src/evidence-integrity.ts` independently validates that graph against ORIGINAL before translation generation. `src/engine.ts` attaches accepted evidence to the current TransformationRun and uses typed delta/route decisions for semantic retry handling without changing the translation request contract.
 
 ## Current completion phase
 
@@ -54,13 +56,15 @@ Source-side completion gates currently include:
 - retry from ORIGINAL input only;
 - fail-closed source-language mismatch and invalid semantic-language detection;
 - typed Architecture v3 integrity-control contracts and deterministic error-delta routing wired into semantic retry behavior;
-- typed source `MeaningEvidenceGraph` construction without an additional model call;
+- typed source `MeaningEvidenceGraph` construction without an additional Qwen call;
+- independent ORIGINAL-vs-EvidenceGraph validation before translation generation;
+- fail-closed rejection of unsupported evidence, evidence contradictions, and invented ambiguity resolution;
 - no blind regeneration when the validator reports unresolved/guessed ambiguity;
 - a 13-case multilingual/adversarial regression seed covering negation, prohibitions, conditions, exceptions, quantities, deadlines, ordering, permissions, mixed scripts, low-resource Swahili, and embedded prompt-injection text;
 - a service benchmark that exits non-zero on HTTP/contract failure, empty translation, protected-literal loss, or any external translation API call;
 - a bounded fail-open TGserver ZERO P007 runtime producer for `asteria_started`, `translate_succeeded`, and `translate_failed`.
 
-These are repository/CI capabilities only until the same branch is exercised against the real Qwen3 + Granite runtime. The regression seed remains `SEED_NOT_ACCEPTANCE_AUTHORITY` until reviewed and live evidence is captured.
+These are repository/CI capabilities only until the same branch is exercised against the real Qwen3 + Granite runtime. The Evidence Integrity Gate itself also requires multilingual runtime/human evidence before it can be treated as universal source-understanding proof. The regression seed remains `SEED_NOT_ACCEPTANCE_AUTHORITY` until reviewed and live evidence is captured.
 
 ## Architecture
 
@@ -89,7 +93,7 @@ Original Input / Context (Authority)
 
 The **Original Input remains the semantic authority**. `MeaningEvidenceGraph` is evidence extracted from the original and must never silently replace or override it. Unknown or ambiguous meaning is preserved as unresolved rather than guessed.
 
-The executable `/internal/v1/translate` path now uses the first typed Architecture v3 evidence/failure-routing slices. Risk routing, executable REANALYZE, Language Intelligence Adapters, same-language canonicalization, and persistent Attempt/Checkpoint/Failure Memory remain later source units. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/DESIGN_DELTA.md`](docs/DESIGN_DELTA.md).
+The executable `/internal/v1/translate` path now uses typed Architecture v3 source evidence, a pre-generation Evidence Integrity Gate, and typed failure routing. Risk routing, executable REANALYZE, Language Intelligence Adapters, same-language canonicalization, and persistent Attempt/Checkpoint/Failure Memory remain later source units. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/DESIGN_DELTA.md`](docs/DESIGN_DELTA.md).
 
 asteria does not know Astera App's eight result keys.
 
@@ -101,7 +105,7 @@ All routes require `Authorization: Bearer <ASTERIA_INTERNAL_TOKEN>`.
 - `GET /internal/v1/capabilities`
 - `POST /internal/v1/translate`
 
-Translate request uses `request_id`, `profile_version`, BCP47 `target_language`, optional `source_language`, reserved `glossary_id`, and ordered `{id,text}` segments.
+Translate request uses `request_id`, `profile_version`, BCP47 `target_language`, optional `source_language`, reserved `glossary_id`, and ordered `{id,text}` segments. Translation usage reports total model `calls` and the separate `evidence_validations`, `semantic_validations`, and retry counters so the added integrity work is observable.
 
 Same-language transformation endpoints/modes are part of the adopted product architecture but are **not yet implemented** and must not be inferred from the current API.
 

@@ -1,5 +1,6 @@
 import { GRANITE_MODEL_ID, QWEN_MODEL_ID, requestAiCore, type AiCoreConfig, type EngineResult } from './ai-core.js';
 import { codedError } from './errors.js';
+import { evidenceIntegrityFailureSummary, evidenceIntegrityPass, evidenceIntegrityVerdict } from './evidence-integrity.js';
 import { createTranslationContract, errorDeltaGuidance, semanticErrorDeltas, selectCorrectionRoute, type AttemptRecord, type TransformationRun } from './integrity-control.js';
 import { canonicalLanguage, sameLanguage } from './language.js';
 import { decodeBatch, deterministicValidationError, encodeBatch, guidanceBlock, serializeMeaningBatch, translationInstruction, validateBatchStructure, type TranslationStrategy } from './quality.js';
@@ -8,7 +9,7 @@ import { meaningRecord, SEMANTIC_PASS_SCORE, semanticPass, semanticVerdict } fro
 export const PROFILE_VERSION = 'asteria-translation-v1';
 export type TranslationSegment = { id: string; text: string };
 export type TranslationRequest = { request_id: string; profile_version: string; target_language: string; source_language?: string; glossary_id?: string; segments: TranslationSegment[] };
-export type TranslationUsage = { provider: 'ai_core_qwen3'; model: string; validation_model: string; calls: number; input_tokens: number; output_tokens: number; external_api_calls: 0; validation_fallbacks: number; semantic_validations: number; semantic_retries: number };
+export type TranslationUsage = { provider: 'ai_core_qwen3'; model: string; validation_model: string; calls: number; input_tokens: number; output_tokens: number; external_api_calls: 0; validation_fallbacks: number; evidence_validations: number; semantic_validations: number; semantic_retries: number };
 export type TranslationResponse = { request_id: string; profile_version: string; source_language?: string; detected_source_language?: string; target_language: string; language_capability_status: 'NOT_VERIFIED'; segments: TranslationSegment[]; usage: TranslationUsage };
 export type EngineConfig = { aiCore: AiCoreConfig; timeoutMs: number };
 type BatchResult = EngineResult & { bodies: string[] };
@@ -61,7 +62,7 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
   const request = parseRequest(input);
   const contract = createTranslationContract(request.targetLanguage, request.sourceLanguage);
   const active = request.segments.map((segment, index) => ({ segment, index })).filter(({ segment }) => segment.text.trim());
-  const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, semanticValidations: 0, semanticRetries: 0 };
+  const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, evidenceValidations: 0, semanticValidations: 0, semanticRetries: 0 };
   const add = (engine: EngineResult) => {
     totals.calls += 1;
     totals.inputTokens += engine.inputTokens;
@@ -72,12 +73,20 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
 
   if (active.length) {
     const originals = active.map(({ segment }) => segment.text);
+    const originalBatch = serializeMeaningBatch(originals);
     const attempts: AttemptRecord[] = [];
-    const sourceMeaning = await meaningRecord(config.aiCore, serializeMeaningBatch(originals), config.timeoutMs);
+    const sourceMeaning = await meaningRecord(config.aiCore, originalBatch, config.timeoutMs);
     add(sourceMeaning.result);
     detectedSourceLanguage = sourceMeaning.detectedLanguage;
     const run: TransformationRun = { runId: request.requestId, original: originals, contract, sourceEvidence: sourceMeaning.graph, attempts };
     if (request.sourceLanguage && !sameLanguage(request.sourceLanguage, detectedSourceLanguage)) throw codedError('SOURCE_LANGUAGE_MISMATCH', `Detected source language ${detectedSourceLanguage} does not match requested ${request.sourceLanguage}.`, false, 422);
+
+    const evidenceCheck = await evidenceIntegrityVerdict(config.aiCore, originalBatch, sourceMeaning.graph, config.timeoutMs);
+    add(evidenceCheck.result);
+    totals.evidenceValidations += 1;
+    if (!evidenceIntegrityPass(evidenceCheck.verdict)) {
+      throw codedError('TRANSLATION_EVIDENCE_INTEGRITY_FAILED', `Source evidence graph is not safely grounded in ORIGINAL: ${evidenceIntegrityFailureSummary(evidenceCheck.verdict)}`, false, 422);
+    }
 
     let candidate: BatchResult;
     try {
@@ -157,6 +166,7 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
       output_tokens: totals.outputTokens,
       external_api_calls: 0,
       validation_fallbacks: totals.validationFallbacks,
+      evidence_validations: totals.evidenceValidations,
       semantic_validations: totals.semanticValidations,
       semantic_retries: totals.semanticRetries
     }
