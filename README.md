@@ -18,9 +18,25 @@ Migration source authority: Astera App Draft PR #72, source snapshot `169be93096
 - protected tokens, section order, Markdown shape, line shape and information volume are deterministic gates.
 - semantic retry always restarts from ORIGINAL input.
 - embedded instructions are treated as untrusted data.
-- `target_language` is required BCP47; `source_language` is optional BCP47 and fails closed on detected mismatch.
+- `target_language` is required BCP47; `source_language` is optional BCP47 and fails closed on detected mismatch before translation generation.
+- invalid semantic-recorder `detected_language` values fail closed.
 - non-empty `glossary_id` is reserved but currently returns `TRANSLATION_GLOSSARY_NOT_IMPLEMENTED`.
 - language capability is `NOT_VERIFIED` until measured; source/CI PASS is not universal-language correctness.
+
+## Current completion phase
+
+The current phase is intentionally limited to meaning preservation, safety, and correctness before any native-fluency, locale, or style optimization.
+
+Source-side completion gates currently include:
+
+- deterministic protected-value and structure validation;
+- semantic equivalence and requested-language verification;
+- retry from ORIGINAL input only;
+- fail-closed source-language mismatch and invalid semantic-language detection;
+- a 13-case multilingual/adversarial regression seed covering negation, prohibitions, conditions, exceptions, quantities, deadlines, ordering, permissions, mixed scripts, low-resource Swahili, and embedded prompt-injection text;
+- a service benchmark that exits non-zero on HTTP/contract failure, empty translation, protected-literal loss, or any external translation API call.
+
+These are repository/CI capabilities only until the same branch is exercised against the real Qwen3 + Granite runtime. The regression seed remains `SEED_NOT_ACCEPTANCE_AUTHORITY` until reviewed and live evidence is captured.
 
 ## Architecture
 
@@ -63,7 +79,7 @@ python3 -m py_compile scripts/raw-model-benchmark.py scripts/service-benchmark.p
 
 ## Runtime boundary
 
-No merge, deploy, new model download, external provider, production switch, Telegram topic provisioning, or secret mutation is part of the initial source migration.
+No merge, deploy, new model download, external provider, production switch, Telegram topic provisioning, or secret mutation is part of the initial source migration or the current safety/correctness hardening phase.
 
 TGserver ZERO source registration is being handled separately as `P007` / stream `default`; until its registration PR is merged and topics/producer/real-log E2E are complete, Runtime log search is not active.
 
