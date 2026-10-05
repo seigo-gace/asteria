@@ -111,8 +111,10 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
       }
 
       totals.semanticRetries += 1;
-      const guidance = errorDeltaGuidance(firstDeltas) || `Semantic score ${first.verdict.score.toFixed(3)} was below ${SEMANTIC_PASS_SCORE}. Preserve every material meaning exactly.`;
-      const retry = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, 'semantic_retry', config.timeoutMs, guidance);
+      const guidanceParts = [errorDeltaGuidance(firstDeltas)].filter(Boolean);
+      if (!first.verdict.targetLanguageMatch) guidanceParts.push(`Candidate prose must be translated into requested target language ${request.targetLanguage}; do not leave source prose untranslated.`);
+      if (!guidanceParts.length) guidanceParts.push(`Semantic score ${first.verdict.score.toFixed(3)} was below ${SEMANTIC_PASS_SCORE}. Preserve every material meaning exactly.`);
+      const retry = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, 'semantic_retry', config.timeoutMs, guidanceParts.join('\n'));
       add(retry);
       const retryMeaning = await meaningRecord(config.aiCore, serializeMeaningBatch(retry.bodies), config.timeoutMs);
       add(retryMeaning.result);
