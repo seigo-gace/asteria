@@ -6,7 +6,7 @@ import { canonicalLanguage, sameLanguage } from './language.js';
 import { meaningPreservingNormalizationCandidate, normalizationEquivalencePass, normalizationEquivalenceVerdict } from './normalization.js';
 import { decodeBatch, deterministicValidationError, encodeBatch, guidanceBlock, inspectProtectedLiterals, serializeMeaningBatch, translationInstruction, validateBatchStructure, type TranslationStrategy } from './quality.js';
 import { classifyTranslationRisk, riskGuidance, type RiskClass, type RiskSignal } from './risk-router.js';
-import { meaningRecord, reanalysisRecord, SEMANTIC_PASS_SCORE, semanticPass, semanticVerdict } from './semantic.js';
+import { meaningRecord, reanalysisRecord, SEMANTIC_PASS_SCORE, semanticPass, semanticVerdict, type MeaningRecordResult } from './semantic.js';
 
 export const PROFILE_VERSION = 'asteria-translation-v1';
 export type TranslationSegment = { id: string; text: string };
@@ -15,12 +15,12 @@ export type TranslationUsage = { provider: 'ai_core_qwen3'; model: string; valid
 export type TranslationResponse = { request_id: string; profile_version: string; source_language?: string; detected_source_language?: string; target_language: string; language_capability_status: 'NOT_VERIFIED'; segments: TranslationSegment[]; usage: TranslationUsage };
 export type EngineConfig = { aiCore: AiCoreConfig; timeoutMs: number };
 type BatchResult = EngineResult & { bodies: string[] };
+const NORMALIZATION_SIGNALS = new Set<RiskSignal>(['negation', 'condition', 'exception', 'modality', 'reference_context', 'explicit_ambiguity']);
 
 function validRequestId(value: unknown): string {
   if (typeof value !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) throw codedError('REQUEST_ID_INVALID', 'request_id must be 1-128 safe identifier characters.', false, 400);
   return value;
 }
-
 function validateSegments(value: unknown): TranslationSegment[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 128) throw codedError('SEGMENTS_INVALID', 'segments must contain 1-128 ordered items.', false, 400);
   const seen = new Set<string>();
@@ -34,7 +34,6 @@ function validateSegments(value: unknown): TranslationSegment[] {
     return { id, text };
   });
 }
-
 function parseRequest(input: unknown): { requestId: string; targetLanguage: string; sourceLanguage?: string; segments: TranslationSegment[] } {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw codedError('REQUEST_INVALID', 'Request body must be an object.', false, 400);
   const body = input as TranslationRequest;
@@ -47,7 +46,6 @@ function parseRequest(input: unknown): { requestId: string; targetLanguage: stri
   const segments = validateSegments(body.segments);
   return { requestId, targetLanguage, ...(sourceLanguage ? { sourceLanguage } : {}), segments };
 }
-
 async function translateBatch(aiCore: AiCoreConfig, bodies: string[], targetLanguage: string, sourceLanguage: string | undefined, strategy: TranslationStrategy, timeoutMs: number, guidance = ''): Promise<BatchResult> {
   const encoded = encodeBatch(bodies);
   const response = await requestAiCore(aiCore, QWEN_MODEL_ID, translationInstruction(strategy), `TARGET_LANGUAGE=${targetLanguage}\nSOURCE_LANGUAGE=${sourceLanguage ?? 'AUTO'}\nSTRATEGY=${strategy}${guidanceBlock(strategy, guidance)}\nBEGIN_BATCH\n${encoded.text}\nEND_BATCH`, timeoutMs, 8192);
@@ -67,11 +65,7 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
   const originals = active.map(({ segment }) => segment.text);
   const risk = classifyTranslationRisk(originals, inspectProtectedLiterals);
   const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, evidenceValidations: 0, semanticValidations: 0, semanticRetries: 0, sourceReanalyses: 0, riskFocusedGenerations: 0, normalizationAttempts: 0, normalizationAccepts: 0, normalizationRejects: 0, normalizationValidations: 0 };
-  const add = (engine: EngineResult) => {
-    totals.calls += 1;
-    totals.inputTokens += engine.inputTokens;
-    totals.outputTokens += engine.outputTokens;
-  };
+  const add = (engine: EngineResult) => { totals.calls += 1; totals.inputTokens += engine.inputTokens; totals.outputTokens += engine.outputTokens; };
   const output = request.segments.map((segment) => ({ ...segment }));
   let detectedSourceLanguage: string | undefined;
 
@@ -79,25 +73,41 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
     const originalBatch = serializeMeaningBatch(originals);
     const attempts: AttemptRecord[] = [];
     const focused = risk.requiresFocusedMeaningAcquisition;
-    let meaningInputBatch = originalBatch;
-    let normalizationAccepted = false;
+    const normalizationNeeded = focused && risk.signals.some((signal) => NORMALIZATION_SIGNALS.has(signal));
 
-    if (focused) {
+    const originalMeaning = await meaningRecord(config.aiCore, originalBatch, config.timeoutMs);
+    add(originalMeaning.result);
+    detectedSourceLanguage = originalMeaning.detectedLanguage;
+    if (request.sourceLanguage && !sameLanguage(request.sourceLanguage, detectedSourceLanguage)) throw codedError('SOURCE_LANGUAGE_MISMATCH', `Detected source language ${detectedSourceLanguage} does not match requested ${request.sourceLanguage}.`, false, 422);
+
+    const originalEvidenceCheck = await evidenceIntegrityVerdict(config.aiCore, originalBatch, originalMeaning.graph, config.timeoutMs);
+    add(originalEvidenceCheck.result);
+    totals.evidenceValidations += 1;
+    if (!evidenceIntegrityPass(originalEvidenceCheck.verdict)) throw codedError('TRANSLATION_EVIDENCE_INTEGRITY_FAILED', `Source evidence graph is not safely grounded in ORIGINAL: ${evidenceIntegrityFailureSummary(originalEvidenceCheck.verdict)}`, false, 422);
+
+    let sourceMeaning: MeaningRecordResult = originalMeaning;
+    let normalizationAccepted = false;
+    if (normalizationNeeded) {
       totals.normalizationAttempts += 1;
       try {
-        const normalization = await meaningPreservingNormalizationCandidate(config.aiCore, originals, request.sourceLanguage, config.timeoutMs);
+        const normalization = await meaningPreservingNormalizationCandidate(config.aiCore, originals, request.sourceLanguage ?? detectedSourceLanguage, config.timeoutMs);
         add(normalization.result);
         const normalizedBatch = serializeMeaningBatch(normalization.bodies);
         const normalizationCheck = await normalizationEquivalenceVerdict(config.aiCore, originalBatch, normalizedBatch, config.timeoutMs);
         add(normalizationCheck.result);
         totals.normalizationValidations += 1;
         if (normalizationEquivalencePass(normalizationCheck.verdict)) {
-          meaningInputBatch = normalizedBatch;
-          normalizationAccepted = true;
-          totals.normalizationAccepts += 1;
-        } else {
-          totals.normalizationRejects += 1;
-        }
+          const normalizedMeaning = await meaningRecord(config.aiCore, normalizedBatch, config.timeoutMs);
+          add(normalizedMeaning.result);
+          const normalizedEvidence = await evidenceIntegrityVerdict(config.aiCore, originalBatch, normalizedMeaning.graph, config.timeoutMs);
+          add(normalizedEvidence.result);
+          totals.evidenceValidations += 1;
+          if (sameLanguage(normalizedMeaning.detectedLanguage, detectedSourceLanguage) && evidenceIntegrityPass(normalizedEvidence.verdict)) {
+            sourceMeaning = normalizedMeaning;
+            normalizationAccepted = true;
+            totals.normalizationAccepts += 1;
+          } else totals.normalizationRejects += 1;
+        } else totals.normalizationRejects += 1;
       } catch (error) {
         if (!deterministicValidationError(error)) throw error;
         const failedUsage = (error as { engineUsage?: EngineResult }).engineUsage;
@@ -106,23 +116,9 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
       }
     }
 
-    const sourceMeaning = await meaningRecord(config.aiCore, meaningInputBatch, config.timeoutMs);
-    add(sourceMeaning.result);
-    detectedSourceLanguage = sourceMeaning.detectedLanguage;
     const run: TransformationRun = { runId: request.requestId, original: originals, contract, risk, sourceEvidence: sourceMeaning.graph, attempts };
-    if (request.sourceLanguage && !sameLanguage(request.sourceLanguage, detectedSourceLanguage)) throw codedError('SOURCE_LANGUAGE_MISMATCH', `Detected source language ${detectedSourceLanguage} does not match requested ${request.sourceLanguage}.`, false, 422);
-
-    const evidenceCheck = await evidenceIntegrityVerdict(config.aiCore, originalBatch, sourceMeaning.graph, config.timeoutMs);
-    add(evidenceCheck.result);
-    totals.evidenceValidations += 1;
-    if (!evidenceIntegrityPass(evidenceCheck.verdict)) {
-      throw codedError('TRANSLATION_EVIDENCE_INTEGRITY_FAILED', `Source evidence graph is not safely grounded in ORIGINAL: ${evidenceIntegrityFailureSummary(evidenceCheck.verdict)}`, false, 422);
-    }
-
     const initialStrategy: TranslationStrategy = focused ? 'risk_focused' : 'document';
-    const initialGuidance = focused
-      ? [riskGuidance(run.risk), `NORMALIZATION_ACCEPTED=${normalizationAccepted ? '1' : '0'}`, `VERIFIED_SOURCE_EVIDENCE=${sourceMeaning.record}`].filter(Boolean).join('\n')
-      : '';
+    const initialGuidance = focused ? [riskGuidance(run.risk), `NORMALIZATION_ATTEMPTED=${normalizationNeeded ? '1' : '0'}`, `NORMALIZATION_ACCEPTED=${normalizationAccepted ? '1' : '0'}`, `VERIFIED_SOURCE_EVIDENCE=${sourceMeaning.record}`].join('\n') : '';
     let candidate: BatchResult;
     try {
       if (focused) totals.riskFocusedGenerations += 1;
@@ -147,38 +143,26 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
       const firstDeltas = semanticErrorDeltas(first.verdict, SEMANTIC_PASS_SCORE);
       const firstRoute = selectCorrectionRoute(firstDeltas, 1);
       attempts.push({ attempt: 1, route: firstRoute, errors: firstDeltas });
-
-      if (firstRoute !== 'FRESH_REGENERATE' && firstRoute !== 'REANALYZE') {
-        throw codedError('TRANSLATION_INTEGRITY_ROUTE_UNAVAILABLE', `Translation integrity route ${firstRoute} is not executable in the current translation phase.`, false, 422);
-      }
-      if (run.contract.maxSemanticRegenerations < 1) {
-        throw codedError('TRANSLATION_INTEGRITY_ROUTE_UNAVAILABLE', 'Semantic regeneration budget is exhausted.', false, 422);
-      }
+      if (firstRoute !== 'FRESH_REGENERATE' && firstRoute !== 'REANALYZE') throw codedError('TRANSLATION_INTEGRITY_ROUTE_UNAVAILABLE', `Translation integrity route ${firstRoute} is not executable in the current translation phase.`, false, 422);
+      if (run.contract.maxSemanticRegenerations < 1) throw codedError('TRANSLATION_INTEGRITY_ROUTE_UNAVAILABLE', 'Semantic regeneration budget is exhausted.', false, 422);
 
       const guidanceParts = [errorDeltaGuidance(firstDeltas)].filter(Boolean);
       let acceptedSourceRecord = sourceMeaning.record;
-
       if (firstRoute === 'REANALYZE') {
         if (run.contract.maxSourceReanalyses < 1) throw codedError('TRANSLATION_REANALYSIS_REQUIRED', 'Source reanalysis budget is exhausted.', false, 422);
         totals.sourceReanalyses += 1;
         const reanalysis = await reanalysisRecord(config.aiCore, originalBatch, errorDeltaGuidance(firstDeltas), config.timeoutMs);
         add(reanalysis.result);
-        if (!sameLanguage(reanalysis.detectedLanguage, detectedSourceLanguage)) {
-          throw codedError('TRANSLATION_REANALYSIS_LANGUAGE_MISMATCH', `Source reanalysis changed detected language from ${detectedSourceLanguage} to ${reanalysis.detectedLanguage}.`, true, 502);
-        }
+        if (!sameLanguage(reanalysis.detectedLanguage, detectedSourceLanguage)) throw codedError('TRANSLATION_REANALYSIS_LANGUAGE_MISMATCH', `Source reanalysis changed detected language from ${detectedSourceLanguage} to ${reanalysis.detectedLanguage}.`, true, 502);
         const reanalysisEvidence = await evidenceIntegrityVerdict(config.aiCore, originalBatch, reanalysis.graph, config.timeoutMs);
         add(reanalysisEvidence.result);
         totals.evidenceValidations += 1;
-        if (!evidenceIntegrityPass(reanalysisEvidence.verdict)) {
-          throw codedError('TRANSLATION_EVIDENCE_INTEGRITY_FAILED', `Reanalyzed source evidence is not safely grounded in ORIGINAL: ${evidenceIntegrityFailureSummary(reanalysisEvidence.verdict)}`, false, 422);
-        }
+        if (!evidenceIntegrityPass(reanalysisEvidence.verdict)) throw codedError('TRANSLATION_EVIDENCE_INTEGRITY_FAILED', `Reanalyzed source evidence is not safely grounded in ORIGINAL: ${evidenceIntegrityFailureSummary(reanalysisEvidence.verdict)}`, false, 422);
         acceptedSourceRecord = reanalysis.record;
         guidanceParts.push(`REANALYZED_SOURCE_EVIDENCE=${reanalysis.record}`);
       }
-
       if (!first.verdict.targetLanguageMatch) guidanceParts.push(`Candidate prose must be translated into requested target language ${request.targetLanguage}; do not leave source prose untranslated.`);
       if (!guidanceParts.length) guidanceParts.push(`Semantic score ${first.verdict.score.toFixed(3)} was below ${SEMANTIC_PASS_SCORE}. Preserve every material meaning exactly.`);
-
       totals.semanticRetries += 1;
       const retry = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, 'semantic_retry', config.timeoutMs, guidanceParts.join('\n'));
       add(retry);
@@ -187,53 +171,18 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
       const second = await semanticVerdict(config.aiCore, acceptedSourceRecord, retryMeaning.record, request.targetLanguage, config.timeoutMs);
       add(second.result);
       totals.semanticValidations += 1;
-
       if (!semanticPass(second.verdict)) {
         const secondDeltas = semanticErrorDeltas(second.verdict, SEMANTIC_PASS_SCORE);
         const secondRoute = selectCorrectionRoute(secondDeltas, 2);
         attempts.push({ attempt: 2, route: secondRoute, errors: secondDeltas });
         throw codedError('TRANSLATION_SEMANTIC_EQUIVALENCE_FAILED', `Translation failed semantic equivalence after retry: route=${secondRoute}; errors=${errorDeltaGuidance(secondDeltas) || 'unspecified'}`, false, 422);
       }
-
       attempts.push({ attempt: 2, route: 'PASS', errors: [] });
       candidate = retry;
-    } else {
-      attempts.push({ attempt: 1, route: 'PASS', errors: [] });
-    }
+    } else attempts.push({ attempt: 1, route: 'PASS', errors: [] });
 
-    active.forEach(({ index }, translatedIndex) => {
-      output[index] = { ...output[index]!, text: candidate.bodies[translatedIndex] ?? output[index]!.text };
-    });
+    active.forEach(({ index }, translatedIndex) => { output[index] = { ...output[index]!, text: candidate.bodies[translatedIndex] ?? output[index]!.text }; });
   }
 
-  return {
-    request_id: request.requestId,
-    profile_version: PROFILE_VERSION,
-    ...(request.sourceLanguage ? { source_language: request.sourceLanguage } : {}),
-    ...(detectedSourceLanguage ? { detected_source_language: detectedSourceLanguage } : {}),
-    target_language: request.targetLanguage,
-    language_capability_status: 'NOT_VERIFIED',
-    segments: output,
-    usage: {
-      provider: 'ai_core_qwen3',
-      model: QWEN_MODEL_ID,
-      validation_model: GRANITE_MODEL_ID,
-      calls: totals.calls,
-      input_tokens: totals.inputTokens,
-      output_tokens: totals.outputTokens,
-      external_api_calls: 0,
-      validation_fallbacks: totals.validationFallbacks,
-      evidence_validations: totals.evidenceValidations,
-      semantic_validations: totals.semanticValidations,
-      semantic_retries: totals.semanticRetries,
-      source_reanalyses: totals.sourceReanalyses,
-      risk_focused_generations: totals.riskFocusedGenerations,
-      normalization_attempts: totals.normalizationAttempts,
-      normalization_accepts: totals.normalizationAccepts,
-      normalization_rejects: totals.normalizationRejects,
-      normalization_validations: totals.normalizationValidations,
-      risk_class: risk.riskClass,
-      risk_signals: risk.signals
-    }
-  };
+  return { request_id: request.requestId, profile_version: PROFILE_VERSION, ...(request.sourceLanguage ? { source_language: request.sourceLanguage } : {}), ...(detectedSourceLanguage ? { detected_source_language: detectedSourceLanguage } : {}), target_language: request.targetLanguage, language_capability_status: 'NOT_VERIFIED', segments: output, usage: { provider: 'ai_core_qwen3', model: QWEN_MODEL_ID, validation_model: GRANITE_MODEL_ID, calls: totals.calls, input_tokens: totals.inputTokens, output_tokens: totals.outputTokens, external_api_calls: 0, validation_fallbacks: totals.validationFallbacks, evidence_validations: totals.evidenceValidations, semantic_validations: totals.semanticValidations, semantic_retries: totals.semanticRetries, source_reanalyses: totals.sourceReanalyses, risk_focused_generations: totals.riskFocusedGenerations, normalization_attempts: totals.normalizationAttempts, normalization_accepts: totals.normalizationAccepts, normalization_rejects: totals.normalizationRejects, normalization_validations: totals.normalizationValidations, risk_class: risk.riskClass, risk_signals: risk.signals } };
 }

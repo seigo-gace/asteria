@@ -27,7 +27,7 @@ async function run(text: string, normalizationAccepted = true): Promise<{ out: A
   globalThis.fetch = async (_input, init) => {
     const request = body(init);
     if (normalization(request)) {
-      const batch = user(request).match(/BEGIN_BATCH\n([\s\S]*)\nEND_BATCH$/)?.[1] ?? '';
+      const batch = user(request).match(/NORMALIZATION_BATCH_BEGIN\n([\s\S]*)\nNORMALIZATION_BATCH_END$/)?.[1] ?? '';
       const normalized = normalizationAccepted ? batch : batch.replace('Do not publish', 'Publish');
       return response(QWEN_RESPONSE, normalized);
     }
@@ -48,39 +48,50 @@ async function run(text: string, normalizationAccepted = true): Promise<{ out: A
     const out = await translateSegments({ request_id: 'risk-route', profile_version: PROFILE_VERSION, source_language: 'en', target_language: 'ja', segments: [{ id: 's1', text }] }, CONFIG);
     assert.ok(translationRequest);
     return { out, translationRequest, meaningRequests };
-  } finally {
-    globalThis.fetch = old;
-  }
+  } finally { globalThis.fetch = old; }
 }
 
-test('high-risk source uses gated normalization and risk-focused generation while keeping integrity gates', async () => {
-  const { out, translationRequest } = await run('Do not publish this unless approved before 2026-12-31.');
+test('high-risk source uses gated normalization after ORIGINAL evidence and risk-focused generation', async () => {
+  const { out, translationRequest, meaningRequests } = await run('Do not publish this unless approved before 2026-12-31.');
   assert.match(user(translationRequest), /STRATEGY=risk_focused/);
   assert.match(user(translationRequest), /RISK_CLASS=high-risk/);
+  assert.match(user(translationRequest), /NORMALIZATION_ATTEMPTED=1/);
   assert.match(user(translationRequest), /NORMALIZATION_ACCEPTED=1/);
   assert.match(user(translationRequest), /VERIFIED_SOURCE_EVIDENCE=/);
+  assert.ok(meaningRequests.length >= 3);
+  assert.match(user(meaningRequests[0]!), /Do not publish/);
   assert.equal(out.usage.risk_class, 'high-risk');
   assert.equal(out.usage.risk_focused_generations, 1);
   assert.equal(out.usage.normalization_attempts, 1);
   assert.equal(out.usage.normalization_accepts, 1);
   assert.equal(out.usage.normalization_rejects, 0);
   assert.equal(out.usage.normalization_validations, 1);
-  assert.equal(out.usage.evidence_validations, 1);
-  assert.equal(out.usage.calls, 7);
+  assert.equal(out.usage.evidence_validations, 2);
+  assert.equal(out.usage.calls, 9);
   assert.equal(out.usage.external_api_calls, 0);
 });
 
-test('normalization semantic rejection discards candidate and returns to ORIGINAL for meaning acquisition', async () => {
+test('normalization semantic rejection discards candidate and retains ORIGINAL evidence', async () => {
   const original = 'Do not publish this unless approved before 2026-12-31.';
   const { out, translationRequest, meaningRequests } = await run(original, false);
   assert.equal(out.usage.normalization_attempts, 1);
   assert.equal(out.usage.normalization_accepts, 0);
   assert.equal(out.usage.normalization_rejects, 1);
   assert.equal(out.usage.normalization_validations, 1);
+  assert.equal(out.usage.evidence_validations, 1);
+  assert.equal(out.usage.calls, 7);
   assert.match(user(translationRequest), /NORMALIZATION_ACCEPTED=0/);
-  assert.ok(meaningRequests.length >= 2);
   assert.match(user(meaningRequests[0]!), /Do not publish/);
-  assert.doesNotMatch(user(meaningRequests[0]!), /Publish this unless approved/);
+  assert.equal(meaningRequests.length, 2);
+});
+
+test('quantity-only high-risk input stays risk-focused without unnecessary normalization', async () => {
+  const { out, translationRequest } = await run('Keep 2026-12-31 and 95% unchanged.');
+  assert.match(user(translationRequest), /STRATEGY=risk_focused/);
+  assert.match(user(translationRequest), /NORMALIZATION_ATTEMPTED=0/);
+  assert.equal(out.usage.risk_class, 'high-risk');
+  assert.equal(out.usage.normalization_attempts, 0);
+  assert.equal(out.usage.calls, 5);
 });
 
 test('simple source keeps existing document generation path without normalization overhead', async () => {

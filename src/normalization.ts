@@ -3,13 +3,7 @@ import { codedError } from './errors.js';
 import { decodeBatch, encodeBatch, validateBatchStructure } from './quality.js';
 
 export type NormalizationCandidateResult = { result: EngineResult; bodies: string[] };
-export type NormalizationEquivalenceVerdict = {
-  equivalent: boolean;
-  score: number;
-  sameLanguage: boolean;
-  criticalDifferences: string[];
-};
-
+export type NormalizationEquivalenceVerdict = { equivalent: boolean; score: number; sameLanguage: boolean; criticalDifferences: string[] };
 export const NORMALIZATION_EQUIVALENCE_PASS_SCORE = 0.98;
 
 const NORMALIZATION_SYSTEM = [
@@ -35,36 +29,17 @@ const EQUIVALENCE_SYSTEM = [
   'Use equivalent=true only when there is no material semantic change.'
 ].join(' ');
 
-function strings(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean) : [];
-}
-
+function strings(value: unknown): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean) : []; }
 function object(raw: string): Record<string, unknown> {
   const trimmed = raw.trim();
   const body = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1] ?? trimmed;
-  try {
-    const parsed = JSON.parse(body);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-  } catch {
-    throw codedError('TRANSLATION_NORMALIZATION_VERDICT_INVALID', 'AI Core returned invalid normalization-equivalence JSON.', true, 502);
-  }
+  try { const parsed = JSON.parse(body); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}; }
+  catch { throw codedError('TRANSLATION_NORMALIZATION_VERDICT_INVALID', 'AI Core returned invalid normalization-equivalence JSON.', true, 502); }
 }
 
-export async function meaningPreservingNormalizationCandidate(
-  aiCore: AiCoreConfig,
-  bodies: string[],
-  sourceLanguage: string | undefined,
-  timeoutMs: number
-): Promise<NormalizationCandidateResult> {
+export async function meaningPreservingNormalizationCandidate(aiCore: AiCoreConfig, bodies: string[], sourceLanguage: string | undefined, timeoutMs: number): Promise<NormalizationCandidateResult> {
   const encoded = encodeBatch(bodies);
-  const result = await requestAiCore(
-    aiCore,
-    QWEN_MODEL_ID,
-    NORMALIZATION_SYSTEM,
-    `SOURCE_LANGUAGE=${sourceLanguage ?? 'AUTO'}\nBEGIN_BATCH\n${encoded.text}\nEND_BATCH`,
-    timeoutMs,
-    8192
-  );
+  const result = await requestAiCore(aiCore, QWEN_MODEL_ID, NORMALIZATION_SYSTEM, `SOURCE_LANGUAGE=${sourceLanguage ?? 'AUTO'}\nNORMALIZATION_BATCH_BEGIN\n${encoded.text}\nNORMALIZATION_BATCH_END`, timeoutMs, 8192);
   try {
     const normalized = decodeBatch(result.text, bodies.length, encoded.tokens);
     validateBatchStructure(bodies, normalized);
@@ -74,20 +49,8 @@ export async function meaningPreservingNormalizationCandidate(
   }
 }
 
-export async function normalizationEquivalenceVerdict(
-  aiCore: AiCoreConfig,
-  original: string,
-  normalized: string,
-  timeoutMs: number
-): Promise<{ verdict: NormalizationEquivalenceVerdict; result: EngineResult }> {
-  const result = await requestAiCore(
-    aiCore,
-    GRANITE_MODEL_ID,
-    EQUIVALENCE_SYSTEM,
-    `ORIGINAL_BEGIN\n${original}\nORIGINAL_END\nNORMALIZED_BEGIN\n${normalized}\nNORMALIZED_END`,
-    timeoutMs,
-    2048
-  );
+export async function normalizationEquivalenceVerdict(aiCore: AiCoreConfig, original: string, normalized: string, timeoutMs: number): Promise<{ verdict: NormalizationEquivalenceVerdict; result: EngineResult }> {
+  const result = await requestAiCore(aiCore, GRANITE_MODEL_ID, EQUIVALENCE_SYSTEM, `ORIGINAL_BEGIN\n${original}\nORIGINAL_END\nNORMALIZED_BEGIN\n${normalized}\nNORMALIZED_END`, timeoutMs, 2048);
   const parsed = object(result.text);
   const scoreValue = Number(parsed.score);
   const verdict: NormalizationEquivalenceVerdict = {
@@ -100,14 +63,5 @@ export async function normalizationEquivalenceVerdict(
 }
 
 export function normalizationEquivalencePass(verdict: NormalizationEquivalenceVerdict): boolean {
-  return verdict.equivalent
-    && verdict.score >= NORMALIZATION_EQUIVALENCE_PASS_SCORE
-    && verdict.sameLanguage
-    && verdict.criticalDifferences.length === 0;
-}
-
-export function normalizationFailureSummary(verdict: NormalizationEquivalenceVerdict): string {
-  return verdict.criticalDifferences.length
-    ? verdict.criticalDifferences.join('\n')
-    : `score=${verdict.score.toFixed(3)} equivalent=${verdict.equivalent} same_language=${verdict.sameLanguage}`;
+  return verdict.equivalent && verdict.score >= NORMALIZATION_EQUIVALENCE_PASS_SCORE && verdict.sameLanguage && verdict.criticalDifferences.length === 0;
 }
