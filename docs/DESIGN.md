@@ -8,31 +8,34 @@ asteria is a semantic-preserving Language Transformation Engine. Its purpose is 
 Current implementation priority remains cross-language translation correctness. Same-language canonical rewrite and later style/native-expression transformation are follow-on modes on the same Meaning Integrity Core. asteria does not own consumer UI, billing, history, or application-specific result schemas.
 
 ### Authority model
-Two distinct layers are mandatory:
+Two distinct layers remain mandatory:
 
 1. **Original Input / Context** — immutable semantic authority.
-2. **Meaning Evidence Graph** — structured evidence extracted from ORIGINAL; it constrains generation/verification but never silently replaces ORIGINAL.
+2. **Meaning Evidence Graph** — structured evidence derived from ORIGINAL; it may constrain generation/verification but never replaces ORIGINAL.
 
-Unknown, ambiguous, conflicting or insufficiently supported meaning remains unresolved rather than guessed.
+Normalization is also derived evidence/control input. It is never semantic authority. Unknown, ambiguous, conflicting or insufficiently supported meaning remains unresolved rather than guessed.
 
 ### Executable processing flow
 1. Surface integrity scan protects numbers, dates, money, code, URLs, placeholders and other invariants.
-2. Transformation intent contract fixes requested mode/language and preservation constraints.
-3. Deterministic low-cost Risk Router classifies active input as `simple / complex / high-risk / ambiguous` using explicit surface signals.
-   - Trace inputs include segment/context shape, script mix, negation, conditions/exceptions, modality, protected quantities/values, reference context, explicit ambiguity and code-point length.
-   - No AI call is used for routing.
-   - No numeric long-text threshold is invented without Benchmark Evidence; length is currently trace only.
-   - `high-risk` / `ambiguous` select `risk_focused` first generation.
-   - `simple` / `complex` preserve the existing controlled document generation path.
-   - Mandatory Evidence Integrity, deterministic preservation and semantic verification are never bypassed by a lower risk class.
-4. Meaning acquisition uses the common Qwen semantic record. Targeted projection/normalization and Language Intelligence Adapters remain later selective stages.
-5. Build `MeaningEvidenceGraph` for detected language, claims, constraints, conditions, entities, quantities and uncertainties.
-6. Evidence Integrity Gate independently rejects unsupported additions, contradictions and invented ambiguity resolution against raw ORIGINAL.
-7. Qwen3 controlled generation follows the Risk Router-selected strategy.
-8. Multi-axis verification applies deterministic invariants, candidate semantic record, Granite semantic comparison, requested language validation and unresolved-meaning handling.
-9. `ErrorDelta` routing selects `PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED`.
-10. `REANALYZE` uses only ORIGINAL + verifier ErrorDelta in fresh context, excludes the prior candidate, revalidates rebuilt evidence, and allows at most one ORIGINAL-anchored regeneration.
-11. Final integrity gate precedes acceptance.
+2. Transformation intent contract fixes requested language/mode and preservation constraints.
+3. Deterministic Risk Router classifies active input as `simple / complex / high-risk / ambiguous` from explicit surface/context signals. Routing uses no model call and no invented numeric long-text threshold.
+4. ORIGINAL meaning acquisition runs first through Qwen semantic recording.
+5. Optional declared `source_language` must match detected ORIGINAL language before optional heavy processing.
+6. ORIGINAL-derived `MeaningEvidenceGraph` must pass Granite ORIGINAL-vs-EvidenceGraph Integrity before optional normalization or translation generation.
+7. Selected normalization is considered only for meaning-structure risks where explicitness may help: negation, condition, exception, modality, reference context, or explicit ambiguity.
+   - quantity/protected-value-only risk does not activate normalization;
+   - Qwen creates a same-language meaning-preserving candidate;
+   - candidate must preserve line/Markdown/protected structure;
+   - Granite directly compares ORIGINAL vs normalized candidate;
+   - direct non-pass discards normalization and retains already-validated ORIGINAL evidence;
+   - after direct PASS, Qwen rebuilds Meaning Evidence from normalized text;
+   - that rebuilt evidence must keep the same detected language and pass Granite against ORIGINAL again;
+   - only then may normalized evidence replace ORIGINAL-derived evidence as generation guidance.
+8. Qwen controlled generation always translates ORIGINAL section bodies. `high-risk / ambiguous` use `risk_focused`; `simple / complex` use the existing document path.
+9. Multi-axis verification applies deterministic invariants, candidate semantic record, Granite semantic comparison, requested language validation and unresolved-meaning handling.
+10. `ErrorDelta` routing selects `PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED`.
+11. `REANALYZE` uses only ORIGINAL + verifier ErrorDelta in fresh context, excludes the prior candidate, revalidates rebuilt evidence, and allows at most one ORIGINAL-anchored regeneration.
+12. Final integrity gate precedes acceptance.
 
 ### Current data contracts
 - `TransformationRun`
@@ -42,17 +45,22 @@ Unknown, ambiguous, conflicting or insufficiently supported meaning remains unre
 - `ErrorDelta`
 - `RiskProfile`
 
-`TransformationRun` stores its deterministic RiskProfile alongside ORIGINAL, contract, source evidence and attempts. Router trace must not become semantic authority; risk labels and signals are attention/routing metadata only.
+`TransformationRun` stores deterministic RiskProfile alongside ORIGINAL, contract, source evidence and attempts. Router trace must not become semantic authority.
 
 ### Risk Router boundary
-The Router is deliberately conservative and deterministic. Current source-complete effect is selective generation control without added model calls: meaning-sensitive inputs receive stronger preservation instructions while ordinary inputs retain the lighter existing path. The Router does **not** yet claim source normalization, parser selection, language-specific adapter routing, or proven quality benefit across languages. Those require separate source units and A/B evidence.
+Risk classification and heavy-stage selection are intentionally separate. `high-risk` does not automatically mean every expensive stage runs. Risk Router itself is deterministic and zero-model-call; selected normalization is activated only for meaning-structure signals. Mandatory Evidence Integrity, deterministic protection and semantic verification remain common to all paths.
 
-The architecture keeps meaning and surface-form/style evaluation separate. Style/naturalness may never weaken semantic-preservation gates. Same-language transformation must allow `no-op` when rewriting would add risk without meaningful benefit.
+### Normalization boundary
+Meaning-preserving normalization is a selected analysis aid, not a summary/simplifier and not the translation source. It must not add/delete meaning, resolve unsupported ambiguity, invent referents/subjects, or change polarity, modality, conditions, exceptions, quantities, temporal relations, comparison, causality or command strength.
+
+The safety ordering is deliberate: ORIGINAL semantic reading, source-language validation and ORIGINAL Evidence Integrity all precede normalization. A rejected or unsafe normalization therefore falls back to already-validated ORIGINAL evidence instead of weakening the request or failing merely because the optional helper was not useful.
+
+Call overhead is observable. Simple and quantity-only paths keep prior call counts. Directly rejected normalization adds two local model calls; fully accepted normalization adds four local calls because normalized Meaning Evidence is rebuilt and independently checked against ORIGINAL. This overhead requires runtime A/B justification.
 
 ### Language Intelligence Adapter boundary
-The common core is primary. Language-specific adapters are added only when repeatable evidence proves a language phenomenon is not handled adequately by the common path.
+The common core remains primary. Language-specific adapters are added only when repeatable evidence shows a language phenomenon is not handled adequately by the common path.
 
-The first reference implementation is Deterministic Japanese Parser MCP. Its MeaningGraph may later map into `MeaningEvidenceGraph` for selected high-risk Japanese inputs/output verification. DJPMCP is not the universal core and is not a translation model.
+The first reference implementation is Deterministic Japanese Parser MCP. Its MeaningGraph may later map into `MeaningEvidenceGraph` for selected Japanese cases. DJPMCP is not the universal core and is not a translation model.
 
 ### Evidence / memory control
 Reuse from debugAI and related G-ACE control assets applies at the contract level:
@@ -65,11 +73,11 @@ Reuse from debugAI and related G-ACE control assets applies at the contract leve
 - Runtime PASS is not AI correctness and Test PASS is not universal language correctness.
 
 ### Current model roles
-- Qwen3: sole current translator/generator, semantic recorder and bounded source reanalyst.
-- Granite 4.2 8B: independent source-evidence integrity and semantic-equivalence/requested-language judge; never translation fallback.
+- Qwen3: sole translator/generator, semantic recorder, selected same-language source normalizer, and bounded fresh-context source reanalyst.
+- Granite 4.2 8B: independent normalization-equivalence, source-evidence integrity, semantic-equivalence and requested-language judge; never translation fallback.
 - AI Core Router: only current model access path.
 
-Model-role changes require separate evidence and are not implied by this design update.
+Model-role changes require separate evidence.
 
 ### Security
 All supplied text is untrusted data. asteria never uses source text as executable instruction. Service and AI Core bind/access loopback only. Internal API uses bearer authentication. Secrets are environment-only. Prompt injection embedded in source text remains data.
@@ -78,7 +86,7 @@ All supplied text is untrusted data. asteria never uses source text as executabl
 - `translate` — current implementation priority.
 - `canonicalize` — adopted follow-on same-language integrity mode, not yet implemented.
 - `clarify` — future bounded mode, not yet implemented.
-- style/native-expression modes — future surface-only transformation modes; meaning gate remains unchanged.
+- style/native-expression modes — future surface-only modes; meaning gates remain mandatory.
 
 See `DESIGN_DELTA.md` for the adoption decision, rationale and verification impact.
 
@@ -86,7 +94,7 @@ See `DESIGN_DELTA.md` for the adoption decision, rationale and verification impa
 
 ## Previous Migration Baseline — preserved
 
-The following baseline is retained as the pre-v3 translation design and must remain traceable.
+The following baseline is retained as the pre-v3 translation design and remains traceable.
 
 ### Responsibility
 AsteriaAI translates generic ordered text segments and verifies that translation did not materially change meaning or requested target language. It does not own consumer UI, billing, history, or application-specific result schemas.

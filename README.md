@@ -16,37 +16,53 @@ Migration source authority: Astera App Draft PR #72, source snapshot `169be93096
 
 Current implemented behavior is the translation baseline with executable Language Integrity Architecture v3 control slices:
 
-- Qwen3 is the sole translator/generator and semantic recorder; it also performs one bounded fresh-context source reanalysis when required.
-- Granite independently checks source evidence against ORIGINAL, then judges translation semantic equivalence and requested target language.
+- Qwen3 is the sole translator/generator and semantic recorder; it also performs bounded fresh-context source reanalysis and selected same-language source normalization.
+- Granite independently checks source evidence against ORIGINAL, judges selected normalization against ORIGINAL, and judges translation semantic equivalence/requested target language. Granite is never a translation fallback.
 - AI Core Router is the only model path; loopback HTTP only; external translation API fallback = 0.
 - protected tokens, section order, Markdown shape, line shape and information volume are deterministic gates.
 - embedded instructions are treated as untrusted data.
-- `target_language` is required BCP47; optional `source_language` fails closed on detected mismatch before translation generation.
+- `target_language` is required BCP47; optional `source_language` fails closed on detected mismatch before optional normalization or translation generation.
 - invalid semantic-recorder `detected_language` values fail closed; non-empty `glossary_id` is reserved and fails closed as not implemented.
 - language capability remains `NOT_VERIFIED` until measured; Source/CI PASS is not universal-language correctness.
-- each source semantic record is normalized into a typed `MeaningEvidenceGraph` while ORIGINAL remains semantic authority.
-- before translation generation, an independent Evidence Integrity Gate compares raw ORIGINAL with the source graph and rejects unsupported additions, contradictions, or invented ambiguity resolution.
+- ORIGINAL remains semantic authority. Every accepted `MeaningEvidenceGraph` must be grounded against raw ORIGINAL.
 - semantic failures become typed critical `ErrorDelta` values and route through bounded `PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED` control.
-- ordinary semantic differences route to one ORIGINAL-anchored `FRESH_REGENERATE` attempt.
-- unresolved/guessed ambiguity routes to one bounded `REANALYZE`: Qwen3 re-reads ORIGINAL + verifier ErrorDelta only in fresh context; prior candidate translation is excluded and rebuilt evidence must pass Evidence Integrity again.
+- unresolved/guessed ambiguity may trigger one bounded `REANALYZE` from ORIGINAL + verifier ErrorDelta only; the prior candidate is excluded and rebuilt evidence must pass Evidence Integrity again.
 - a second semantic failure routes to `FAIL_CLOSED`.
-- a deterministic, zero-model-call **Risk Router** classifies active input as `simple / complex / high-risk / ambiguous` from explicit surface signals such as script mix, segment/context shape, negation, condition/exception, modality, protected quantities/values, reference context and explicit ambiguity.
-- no arbitrary text-length threshold is used; code-point length is retained only as trace until Benchmark Evidence supports a routing threshold.
-- `high-risk` and `ambiguous` inputs use `risk_focused` first-generation instructions and bounded risk guidance; `simple` and `complex` inputs retain the existing `document` path.
-- Risk routing does **not** skip Evidence Integrity, semantic validation, protected-value checks or fail-closed behavior, and it adds no AI call on the normal success path.
-- response usage exposes bounded Router trace through `risk_class`, `risk_signals`, and `risk_focused_generations` alongside `evidence_validations`, `semantic_validations`, `semantic_retries`, and `source_reanalyses`.
 
-`src/risk-router.ts` performs deterministic routing; `src/integrity-control.ts` stores the RiskProfile on `TransformationRun`; `src/evidence-integrity.ts` validates source evidence; `src/semantic.ts` owns semantic record/reanalysis; `src/engine.ts` orchestrates risk-selected generation, evidence validation, bounded reanalysis/regeneration, and typed failure routing without changing the translation request contract.
+### Deterministic Risk Router
+
+- active input is classified as `simple / complex / high-risk / ambiguous` from deterministic surface/context signals.
+- signals include script mix, segment/context shape, negation, conditions/exceptions, modality, protected quantities/values, reference context and explicit ambiguity.
+- no arbitrary text-length threshold is used; code-point length remains trace only until Benchmark Evidence supports a threshold.
+- `high-risk` and `ambiguous` use `risk_focused` first-generation instructions; `simple` and `complex` retain the existing `document` path.
+- Risk routing itself adds no AI call and never bypasses mandatory integrity gates.
+
+### Selected meaning-preserving source normalization
+
+Optional normalization is **not** an all-request preprocessing step.
+
+1. ORIGINAL is read first through the existing semantic recorder.
+2. requested `source_language` mismatch fails before optional normalization.
+3. ORIGINAL-derived Meaning Evidence must pass the existing Granite Evidence Integrity Gate first.
+4. normalization is attempted only when the RiskProfile includes meaning-structure signals where explicitness may help: negation, condition, exception, modality, reference context, or explicit ambiguity.
+5. quantity/protected-value-only risk remains `risk_focused` but does not pay normalization overhead.
+6. Qwen produces a same-language normalization candidate that may only make already-present meaning easier to analyze; it may not translate, summarize, add/delete facts, resolve unsupported ambiguity, or change polarity/modality/conditions/quantities/etc.
+7. Granite directly checks ORIGINAL vs normalized candidate. A failed candidate is discarded and the already-validated ORIGINAL evidence remains active.
+8. after direct normalization equivalence PASS, Qwen rebuilds Meaning Evidence from the normalized candidate and Granite checks that evidence against ORIGINAL again.
+9. only when detected language remains consistent and this second Evidence Integrity check passes is normalized evidence adopted.
+10. translation generation always uses the ORIGINAL section bodies; normalization never replaces the translation authority.
+
+Source usage exposes `normalization_attempts`, `normalization_accepts`, `normalization_rejects`, and `normalization_validations`. A simple or quantity-only successful path keeps the prior call count. A normalization candidate rejected at the direct equivalence gate adds two local model calls; a fully accepted normalization path adds four local calls because normalized evidence is independently rebuilt and revalidated. Runtime A/B must justify that extra cost before benefit is claimed.
 
 ## Current completion phase
 
 The current phase is intentionally limited to **Translation Integrity Core**: meaning preservation, safety, correctness and reproducible evidence before same-language canonical rewrite or native/style optimization.
 
-Source-side completion gates currently include deterministic protected-value/structure validation, semantic equivalence/requested-language verification, ORIGINAL-anchored retry, fail-closed language/evidence handling, deterministic Risk Router classification with selective risk-focused first generation, typed source evidence, independent ORIGINAL-vs-EvidenceGraph validation, one bounded fresh-context reanalysis, and second-failure fail closed.
+Source-side completion gates now include deterministic protected-value/structure validation, semantic equivalence/requested-language verification, ORIGINAL-anchored retry, fail-closed language/evidence handling, deterministic Risk Router classification, selective meaning-preserving normalization with direct equivalence and second ORIGINAL evidence validation, bounded fresh-context reanalysis, and second-failure fail closed.
 
-The 13-case multilingual/adversarial regression seed covers negation, prohibitions, conditions, exceptions, quantities, deadlines, ordering, permissions, mixed scripts, low-resource Swahili, and embedded prompt-injection text. The service benchmark fails on HTTP/contract failure, empty translation, required protected-literal loss, or any external translation API call. TGserver ZERO P007 emits only bounded lifecycle metadata.
+The 13-case multilingual/adversarial regression seed covers negation, prohibitions, conditions, exceptions, quantities, deadlines, ordering, permissions, mixed scripts, low-resource Swahili, and embedded prompt-injection text. The seed remains `SEED_NOT_ACCEPTANCE_AUTHORITY` until separately reviewed and exercised live.
 
-These remain repository/CI capabilities until the exact branch is exercised against the real Qwen3 + Granite runtime. Risk routing, Evidence Integrity and REANALYZE all require multilingual runtime/human evidence before universal benefit can be claimed. The regression seed remains `SEED_NOT_ACCEPTANCE_AUTHORITY` until reviewed and exercised live.
+These are repository/CI capabilities only. Risk routing, normalization, Evidence Integrity and REANALYZE require real Qwen3 + Granite multilingual A/B and human evidence before translation-quality benefit or universal correctness can be claimed.
 
 ## Architecture
 
@@ -55,14 +71,17 @@ Original Input / Context (Authority)
   -> Surface Integrity Scan
   -> Transformation Intent Contract
   -> Deterministic Risk Router
-       -> simple / complex: existing controlled generation path
-       -> high-risk / ambiguous: risk-focused generation path
-       -> future: selected projection / Language Intelligence Adapter only when justified
-  -> Meaning Acquisition
-  -> Meaning Evidence Graph
-  -> Evidence Integrity Gate
-  -> Transformation Planner
-  -> Qwen3 Controlled Generation
+  -> ORIGINAL Meaning Acquisition
+  -> Source-language Gate
+  -> ORIGINAL Meaning Evidence Graph
+  -> ORIGINAL Evidence Integrity Gate
+  -> selected high-meaning-risk path only:
+       -> same-language Normalization Candidate
+       -> ORIGINAL-vs-Normalized Equivalence Gate
+       -> Normalized Meaning Evidence
+       -> ORIGINAL-vs-Normalized-Evidence Gate
+       -> reject to ORIGINAL evidence on any non-pass
+  -> Qwen3 Controlled Generation from ORIGINAL
   -> deterministic + Granite independent verification
   -> Error Delta Router
        -> PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED
@@ -70,9 +89,9 @@ Original Input / Context (Authority)
   -> accepted output
 ```
 
-The **Original Input remains semantic authority**. `MeaningEvidenceGraph` is extracted evidence and never silently replaces or overrides ORIGINAL. Unknown or ambiguous meaning remains unresolved rather than guessed.
+The **Original Input remains semantic authority**. Meaning Evidence and normalization are derived evidence/control aids and never silently replace ORIGINAL. Unknown or ambiguous meaning remains unresolved rather than guessed.
 
-The executable `/internal/v1/translate` path now uses deterministic Risk routing, typed source evidence, pre-generation Evidence Integrity, bounded fresh-context REANALYZE and typed failure routing. Targeted meaning-preserving projection, Language Intelligence Adapters, same-language canonicalization, and persistent Attempt/Checkpoint/Failure Memory remain later verified source units. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/DESIGN_DELTA.md`](docs/DESIGN_DELTA.md).
+Deterministic Japanese Parser MCP remains the first Language Intelligence Adapter reference implementation and is not yet integrated. Persistent Attempt/Checkpoint/Failure Memory, same-language canonicalization, and native/style modes remain later verified units.
 
 asteria does not know Astera App's eight result keys.
 
@@ -84,7 +103,7 @@ All routes require `Authorization: Bearer <ASTERIA_INTERNAL_TOKEN>`.
 - `GET /internal/v1/capabilities`
 - `POST /internal/v1/translate`
 
-Translate request uses `request_id`, `profile_version`, BCP47 `target_language`, optional `source_language`, reserved `glossary_id`, and ordered `{id,text}` segments. Usage reports total calls and separate integrity/retry/router counters. Same-language transformation endpoints/modes are adopted future architecture but are **not yet implemented**.
+Translate request uses `request_id`, `profile_version`, BCP47 `target_language`, optional `source_language`, reserved `glossary_id`, and ordered `{id,text}` segments.
 
 ## TGserver ZERO runtime logging
 
@@ -95,7 +114,7 @@ TGSERVER_LOG_URL=http://127.0.0.1:3000
 TGSERVER_LOG_TIMEOUT_MS=1500
 ```
 
-The central Reader path for `seigo-gace/asteria` / P007 is already proven from CHAT through TGserver ZERO. Current-branch runtime events still require exact-head deployment/readback before current-runtime PASS.
+The central Reader path for `seigo-gace/asteria` / P007 is already proven from CHAT through TGserver ZERO. Current-branch runtime events still require exact-head runtime readback before current-runtime PASS.
 
 ## Development
 
