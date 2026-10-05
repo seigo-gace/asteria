@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-"""Full AsteriaAI service regression gate. Corpus authority must be reviewed separately."""
-import argparse, json, os, statistics, sys, time, urllib.request
+"""Full asteria service regression gate. Corpus authority must be reviewed separately."""
+import argparse, json, math, os, statistics, sys, time, urllib.request
 
 
 def fail(case_id, reason):
-    print(json.dumps({"id": case_id, "status": "FAIL", "reason": reason}, ensure_ascii=False))
+    print(json.dumps({"id": case_id, "status": "FAIL", "reason": reason}, ensure_ascii=False), flush=True)
+
+
+def percentile_nearest_rank(values, percentile):
+    if not values:
+        return 0
+    ordered = sorted(values)
+    index = max(0, math.ceil(percentile * len(ordered)) - 1)
+    return ordered[index]
 
 
 def main():
@@ -19,6 +27,7 @@ def main():
 
     for i, row in enumerate(rows):
         case_id = row.get("id", f"case-{i+1}")
+        print(json.dumps({"id": case_id, "status": "START"}, ensure_ascii=False), flush=True)
         body = {
             "request_id": case_id,
             "profile_version": "asteria-translation-v1",
@@ -59,7 +68,7 @@ def main():
                 fail(case_id, reasons)
                 continue
             lat.append(ms)
-            print(json.dumps({"id": case_id, "status": "PASS", "latency_ms": round(ms, 2), "capability": data.get("language_capability_status"), "output": output}, ensure_ascii=False))
+            print(json.dumps({"id": case_id, "status": "PASS", "latency_ms": round(ms, 2), "capability": data.get("language_capability_status"), "output": output}, ensure_ascii=False), flush=True)
         except Exception as e:
             failures += 1
             fail(case_id, type(e).__name__ + ":" + str(e))
@@ -69,10 +78,12 @@ def main():
         "failures": failures,
         "latency_mean_ms": round(statistics.mean(lat), 2) if lat else 0,
         "latency_p50_ms": round(statistics.median(lat), 2) if lat else 0,
+        "latency_p95_ms": round(percentile_nearest_rank(lat, 0.95), 2) if lat else 0,
+        "latency_max_ms": round(max(lat), 2) if lat else 0,
         "acceptance_authority": "CORPUS_REVIEW_REQUIRED",
         "gate": "PASS" if failures == 0 and len(lat) == len(rows) else "FAIL",
     }
-    print(json.dumps(summary, ensure_ascii=False))
+    print(json.dumps(summary, ensure_ascii=False), flush=True)
     return 0 if summary["gate"] == "PASS" else 1
 
 
