@@ -1,12 +1,12 @@
 # Verification
 
-Canonical source verification is `npm run verify`, which runs strict TypeScript check then the Node contract suite. CI also syntax-checks benchmark scripts. Source/CI success proves repository behavior only; it does not prove Contabo runtime, real AI Core multilingual quality, latency under load, same-language integrity, persistent-volume survival, or Production readiness.
+Canonical source verification is `npm run verify`, which runs strict TypeScript check then the Node contract suite. CI also syntax-checks benchmark scripts. Source/CI success proves repository behavior only; it does not prove Contabo runtime, real AI Core multilingual quality, DJPMCP quality benefit, latency under load, same-language integrity, persistent-volume survival, or Production readiness.
 
 ## Current phase — Translation Integrity Core
 
 Before same-language canonical rewrite or native/style work, cross-language transformation must preserve meaning/protected values and fail closed when correctness cannot be established.
 
-Repository/CI gates now cover request validation, protected-token/structure validation, source-language mismatch, semantic-record validation, target-language rejection, exact model identity, loopback-only AI Core, deterministic Risk routing, ORIGINAL Evidence Integrity, selected meaning-preserving normalization, bounded retry/reanalysis, bounded persistent failure-memory reuse, and second-failure fail closed.
+Repository/CI gates now cover request validation, protected-token/structure validation, source-language mismatch, semantic-record validation, target-language rejection, exact model identity, loopback-only AI Core, deterministic Risk routing, ORIGINAL Evidence Integrity, selected meaning-preserving normalization, bounded retry/reanalysis, bounded persistent failure-memory reuse, optional DJPMCP Japanese evidence wiring, and second-failure fail closed.
 
 ## Implemented Language Integrity v3 source slices
 
@@ -14,9 +14,9 @@ Repository/CI gates now cover request validation, protected-token/structure vali
 - deterministic zero-model-call `simple / complex / high-risk / ambiguous` classification;
 - no numeric long-text routing threshold without Benchmark Evidence;
 - `high-risk / ambiguous` use `risk_focused`; `simple / complex` retain `document`;
-- ORIGINAL semantic reading runs before optional normalization;
-- optional declared source language is validated before optional normalization or translation generation;
-- ORIGINAL-derived Meaning Evidence must pass Granite Evidence Integrity before optional normalization;
+- ORIGINAL semantic reading runs before optional language-intelligence/normalization work;
+- optional declared source language is validated before optional heavy processing or translation generation;
+- ORIGINAL-derived Meaning Evidence must pass Granite Evidence Integrity before optional DJPMCP use or normalization;
 - selected normalization runs only for meaning-structure signals: negation, condition, exception, modality, reference context, or explicit ambiguity;
 - quantity/protected-value-only risk does not activate normalization;
 - Qwen normalization is same-language, meaning-preserving, structure-preserving and must not resolve unsupported ambiguity;
@@ -33,11 +33,35 @@ Repository/CI gates now cover request validation, protected-token/structure vali
 - prior accepted translation prose is never returned from memory;
 - malformed/untrusted JSONL history cannot become guidance;
 - memory read/write errors are observable but do not weaken mandatory Translation Integrity gates;
+- optional DJPMCP adapter is loopback-only, Japanese-focused, post-ORIGINAL-gate, non-authoritative and independently observable;
 - a second semantic failure routes to `FAIL_CLOSED`.
+
+## DJPMCP Japanese Language Intelligence source tests
+
+The initial adapter Source unit is based only on verified current DJPMCP contracts: authenticated `POST /v1/analyze` returning the current full `AnalyzeResponse` / `meaning_graph`. Unverified `InterpretationMeaningGraph` extension transport fields are not assumed.
+
+Source tests cover:
+
+- current loopback `/v1/analyze` and Bearer request contract;
+- non-loopback transport and missing adapter key rejection;
+- exact ORIGINAL text match between request and DJPMCP response;
+- malformed/missing `meaning_graph` rejection;
+- bounded structural guidance built without copying raw source prose / `source_text`;
+- `COMPLETE` accepted evidence;
+- `PARTIAL` accepted while preserving unresolved count;
+- `FAILED` analysis rejected as guidance;
+- focused Japanese source invokes the adapter and supplies bounded evidence to generation;
+- non-Japanese focused source bypasses the Japanese adapter;
+- adapter unavailable/error leaves the existing Asteria ORIGINAL/Qwen/Granite integrity path intact;
+- adapter usage is exposed through `japanese_adapter_attempts / accepts / rejects / errors`.
+
+Adapter-derived values remain untrusted evidence data. The Qwen translation system instruction explicitly forbids executing parser-derived CONTROL_GUIDANCE as instructions.
+
+Candidate Source HEAD `b496b9793e814d1ee4b41084ae886b2fb3ad1495` passed AsteriaAI CI #45 / Development Probe #30. This is `CI_EXACT_SHA` source evidence only; it does not prove real Japanese translation improvement.
 
 ## Persistent failure-memory source tests
 
-Source tests now cover:
+Source tests cover:
 
 - exact input-binding + same-evidence rejected attempt becomes bounded failure-class guidance;
 - duplicate rejected attempt identity is not appended twice;
@@ -75,27 +99,40 @@ Risk Router itself adds zero model calls. Selected normalization is a separate h
 - normalization rejected at direct equivalence gate: +2 local model calls;
 - normalization fully accepted: +4 local model calls because normalized Meaning Evidence is rebuilt and independently revalidated against ORIGINAL.
 
-Persistent failure-memory lookup/write adds local file I/O but no external translation API or model call by itself. These are source-contract facts, not proof that normalization or memory improve real translation quality. Real-runtime A/B must compare semantic error rate, repeated-failure rate, latency, CPU/RAM, file-I/O behavior and calls per accepted output.
+Persistent failure-memory lookup/write adds local file I/O but no external translation API or model call by itself. DJPMCP adds one local parser HTTP call only when configured and selected; it is not an external translation API/model call. These are source-contract facts, not proof that normalization, memory or DJPMCP improve real translation quality.
 
 ## Remaining Architecture v3 evidence
 
-Not source-complete or not acceptance-proven:
+Source-complete but acceptance-unproven:
 
 - multilingual/runtime A/B showing selected normalization improves semantic accuracy enough to justify overhead;
 - multilingual/runtime evidence that Risk routing improves semantic accuracy without harmful false routing;
 - multilingual/runtime proof of Granite ORIGINAL-vs-EvidenceGraph and normalization-equivalence reliability;
 - multilingual/runtime proof that fresh-context REANALYZE helps ambiguity failures without unsupported additions;
 - real-runtime proof that persistent failure memory survives approved restart/recreate and reduces repeated identical semantic failures without stale-guidance harm;
-- Deterministic Japanese Parser MCP / other Language Intelligence Adapter integration;
+- real Qwen3 + Granite + DJPMCP A/B showing Japanese critical semantic error improvement without false correction/guessing harm;
 - repeated-run semantic stability;
 - real runtime coverage across language classes and adversarial meaning cases;
 - human-reviewed language-pair acceptance.
 
 Source/CI PASS is **not** universal language correctness.
 
-## Language Intelligence Adapter verification
+## DJPMCP runtime A/B acceptance
 
-Language-specific adapters are not universal completion evidence. Each adapter requires controlled A/B evaluation against the common core. For Deterministic Japanese Parser MCP this includes critical semantic error rate, polarity/condition/exception/modality/reference preservation, unresolved-meaning guessing rate, latency/CPU/RAM/call overhead, and Japanese-input/output directions where applicable.
+The adapter OFF lane is the current common Translation Integrity Core. The adapter ON lane must use the same Japanese ORIGINAL, Qwen3, Granite, target language and benchmark conditions, with only DJPMCP evidence activation changed.
+
+Runtime A/B must measure at minimum:
+
+- critical semantic error rate;
+- polarity / condition / exception / modality / reference preservation;
+- unresolved-meaning guessing rate;
+- false correction / unsupported resolution rate;
+- accepted-output rate;
+- latency p50/p95/max;
+- CPU/RAM;
+- local parser call count and total calls per accepted output.
+
+A Source/CI pass or successful HTTP response is not evidence that DJPMCP improves translation quality.
 
 ## Future same-language integrity verification
 
@@ -103,6 +140,6 @@ When `canonicalize` is implemented, quality remains split into mandatory Meaning
 
 ## Completion evidence hierarchy
 
-Runtime acceptance remains separate from Source/CI and requires exact source/runtime revision alignment, real Qwen3 + Granite execution, multilingual/adversarial service regression, failure-path behavior, persistence/readback across the approved runtime lifecycle, latency measurements, and later human-reviewed corpus/consumer E2E as their phases are reached.
+Runtime acceptance remains separate from Source/CI and requires exact source/runtime revision alignment, real Qwen3 + Granite execution, multilingual/adversarial service regression, failure-path behavior, persistence/readback across the approved runtime lifecycle, adapter A/B, latency measurements, and later human-reviewed corpus/consumer E2E as their phases are reached.
 
 No single language, corpus, CI run, HTTP 200, model response or runtime smoke test may be promoted to universal-language or complete semantic-integrity evidence. Deployment and Production readiness remain separate approval states.

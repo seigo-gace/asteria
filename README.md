@@ -8,7 +8,7 @@ asteria exists to accurately read text in any language and transform it into the
 
 The completed product is intended to use one shared Meaning Integrity Core for cross-language translation, same-language canonical rewrite, and later controlled style/native-expression transformation. The current implementation priority remains **cross-language translation correctness first**; same-language rewrite and style/native optimization must not delay the Translation Integrity Core.
 
-asteria owns language-transformation AI execution, deterministic preservation, semantic evidence/verification, bounded failure memory, benchmarking, runtime boundaries, and its TGserver ZERO P007 runtime producer. Product applications keep their own UI/domain mapping and send generic ordered segments.
+asteria owns language-transformation AI execution, deterministic preservation, semantic evidence/verification, bounded failure memory, optional language-intelligence adapters, benchmarking, runtime boundaries, and its TGserver ZERO P007 runtime producer. Product applications keep their own UI/domain mapping and send generic ordered segments.
 
 Migration source authority: Astera App Draft PR #72, source snapshot `169be9309695396b27f05e4f91fea4823ea5e8fc`.
 
@@ -20,8 +20,8 @@ Current implemented behavior is the translation baseline with executable Languag
 - Granite independently checks source evidence against ORIGINAL, judges selected normalization against ORIGINAL, and judges translation semantic equivalence/requested target language. Granite is never a translation fallback.
 - AI Core Router is the only model path; loopback HTTP only; external translation API fallback = 0.
 - protected tokens, section order, Markdown shape, line shape and information volume are deterministic gates.
-- embedded instructions are treated as untrusted data.
-- `target_language` is required BCP47; optional `source_language` fails closed on detected mismatch before optional normalization or translation generation.
+- embedded instructions and parser-derived control values are treated as untrusted data.
+- `target_language` is required BCP47; optional `source_language` fails closed on detected mismatch before optional heavy processing or translation generation.
 - invalid semantic-recorder `detected_language` values fail closed; non-empty `glossary_id` is reserved and fails closed as not implemented.
 - language capability remains `NOT_VERIFIED` until measured; Source/CI PASS is not universal-language correctness.
 - ORIGINAL remains semantic authority. Every accepted `MeaningEvidenceGraph` must be grounded against raw ORIGINAL.
@@ -56,7 +56,7 @@ Source usage exposes `normalization_attempts`, `normalization_accepts`, `normali
 
 ### Persistent Translation Failure Memory
 
-`asteria` now has a translation-specific persistent failure-memory source contract derived from proven debugAI continuation/history rules.
+`asteria` has a translation-specific persistent failure-memory source contract derived from proven debugAI continuation/history rules.
 
 - memory identity is bound to a SHA-256 digest of profile version, source/target language binding, model identities and ORIGINAL input;
 - accepted source Meaning Evidence is separately hashed and used to decide whether a prior failure is still applicable;
@@ -70,15 +70,33 @@ Source usage exposes `normalization_attempts`, `normalization_accepts`, `normali
 
 Source usage exposes `memory_hits`, `memory_reopened`, `memory_writes`, and `memory_errors`. The default source path is `/app/data/translation-memory.jsonl`; Docker creates a writable `/app/data` directory and Compose defines a named volume. **Source/CI proves only the contract and wiring. Actual persistence across restart/recreate remains Runtime-unverified until the approved runtime gate is executed.**
 
+### Japanese Language Intelligence Adapter — DJPMCP
+
+The first optional Language Intelligence Adapter is now implemented at Source/CI level against the verified current Deterministic Japanese Parser MCP HTTP contract.
+
+- the verified transport is loopback HTTP `POST /v1/analyze` with Bearer authentication;
+- the adapter is enabled only when both `DJPMCP_BASE_URL` and `DJPMCP_API_KEY` are configured; partial configuration fails at startup;
+- only loopback `http://` endpoints are accepted;
+- adapter selection occurs only after ORIGINAL meaning acquisition, source-language validation and ORIGINAL Evidence Integrity PASS, and only for focused Japanese source input;
+- non-Japanese input bypasses the Japanese adapter;
+- current integration consumes only fields actually present in current full `AnalyzeResponse` / `meaning_graph`; unverified `InterpretationMeaningGraph` transport fields are not assumed;
+- parser output is reduced to bounded structural guidance such as polarity, deontic force, argument roles/status, scope relations and unresolved/ambiguity counts; raw source prose is not copied into adapter guidance;
+- `PARTIAL` may be consumed while preserving unresolved state; `FAILED`, invalid or mismatched responses produce no guidance;
+- adapter unavailability/error is observable but does not disable or weaken the existing Qwen/Granite Translation Integrity path;
+- parser-derived guidance is explicitly treated by Qwen as untrusted evidence data, never executable instruction;
+- DJPMCP never replaces ORIGINAL, does not translate, and does not replace Asteria's `MeaningEvidenceGraph` or Granite verification.
+
+Usage exposes `japanese_adapter_attempts`, `japanese_adapter_accepts`, `japanese_adapter_rejects`, and `japanese_adapter_errors`. Adapter OFF is the common-core baseline; Adapter ON is the Japanese A/B lane. Source/CI proves wiring and safety contracts only. Real quality benefit requires exact-head runtime A/B with real DJPMCP + Qwen3 + Granite.
+
 ## Current completion phase
 
 The current phase is intentionally limited to **Translation Integrity Core**: meaning preservation, safety, correctness and reproducible evidence before same-language canonical rewrite or native/style optimization.
 
-Source-side completion gates now include deterministic protected-value/structure validation, semantic equivalence/requested-language verification, ORIGINAL-anchored retry, fail-closed language/evidence handling, deterministic Risk Router classification, selective meaning-preserving normalization with direct equivalence and second ORIGINAL evidence validation, bounded fresh-context reanalysis, bounded persistent failure-memory reuse, and second-failure fail closed.
+Source-side completion gates now include deterministic protected-value/structure validation, semantic equivalence/requested-language verification, ORIGINAL-anchored retry, fail-closed language/evidence handling, deterministic Risk Router classification, selective meaning-preserving normalization with direct equivalence and second ORIGINAL evidence validation, bounded fresh-context reanalysis, bounded persistent failure-memory reuse, optional bounded DJPMCP Japanese evidence, and second-failure fail closed.
 
 The 13-case multilingual/adversarial regression seed covers negation, prohibitions, conditions, exceptions, quantities, deadlines, ordering, permissions, mixed scripts, low-resource Swahili, and embedded prompt-injection text. The seed remains `SEED_NOT_ACCEPTANCE_AUTHORITY` until separately reviewed and exercised live.
 
-These are repository/CI capabilities only. Risk routing, normalization, Evidence Integrity, REANALYZE and persistent failure memory require real Qwen3 + Granite multilingual A/B and human evidence before translation-quality benefit or universal correctness can be claimed.
+These are repository/CI capabilities only. Risk routing, normalization, Evidence Integrity, REANALYZE, persistent failure memory and DJPMCP integration require real multilingual/Japanese A/B and human evidence before translation-quality benefit or universal correctness can be claimed.
 
 ## Architecture
 
@@ -91,6 +109,10 @@ Original Input / Context (Authority)
   -> Source-language Gate
   -> ORIGINAL Meaning Evidence Graph
   -> ORIGINAL Evidence Integrity Gate
+  -> focused Japanese only, when configured:
+       -> DJPMCP /v1/analyze
+       -> bounded structural evidence guidance
+       -> invalid/unavailable: keep common core unchanged
   -> selected high-meaning-risk path only:
        -> same-language Normalization Candidate
        -> ORIGINAL-vs-Normalized Equivalence Gate
@@ -109,9 +131,9 @@ Original Input / Context (Authority)
   -> accepted output
 ```
 
-The **Original Input remains semantic authority**. Meaning Evidence, normalization and memory are derived evidence/control aids and never silently replace ORIGINAL. Unknown or ambiguous meaning remains unresolved rather than guessed.
+The **Original Input remains semantic authority**. Meaning Evidence, DJPMCP guidance, normalization and memory are derived evidence/control aids and never silently replace ORIGINAL. Unknown or ambiguous meaning remains unresolved rather than guessed.
 
-Deterministic Japanese Parser MCP remains the first Language Intelligence Adapter reference implementation and is not yet integrated. Same-language canonicalization and native/style modes remain later verified units.
+Same-language canonicalization and native/style modes remain later verified units.
 
 asteria does not know Astera App's eight result keys.
 
@@ -124,6 +146,16 @@ All routes require `Authorization: Bearer <ASTERIA_INTERNAL_TOKEN>`.
 - `POST /internal/v1/translate`
 
 Translate request uses `request_id`, `profile_version`, BCP47 `target_language`, optional `source_language`, reserved `glossary_id`, and ordered `{id,text}` segments.
+
+## Optional DJPMCP runtime configuration
+
+```text
+DJPMCP_BASE_URL=http://127.0.0.1:8765
+DJPMCP_API_KEY=<runtime secret>
+DJPMCP_TIMEOUT_MS=1000
+```
+
+Do not commit the real API key. Runtime configuration and real A/B remain separate Runtime evidence.
 
 ## TGserver ZERO runtime logging
 
@@ -148,7 +180,7 @@ python3 -m py_compile scripts/raw-model-benchmark.py scripts/service-benchmark.p
 
 ## Runtime boundary
 
-No main merge, new model download, external provider change, production public cutover, or unrelated secret/provider mutation is part of the current Translation Integrity source unit. Existing server project is `/home/admin1/projects/asteria`; runtime/source synchronization, named-volume activation and live persistence verification are separate evidence gates.
+No main merge, new model download, external provider change, production public cutover, real DJPMCP secret/config activation, or unrelated secret/provider mutation is part of the current Source unit. Existing server project is `/home/admin1/projects/asteria`; runtime/source synchronization, named-volume activation, DJPMCP A/B and live verification are separate evidence gates.
 
 ## Documentation
 
