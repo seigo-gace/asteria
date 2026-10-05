@@ -35,7 +35,7 @@ Current implemented behavior is still the translation baseline while Architectur
 - non-empty `glossary_id` is reserved but currently returns `TRANSLATION_GLOSSARY_NOT_IMPLEMENTED`.
 - language capability is `NOT_VERIFIED` until measured; source/CI PASS is not universal-language correctness.
 
-Architecture v3 adds the design contracts for Original Authority, Meaning Evidence Graph, risk routing, Transformation Contract, bounded correction routing, Attempt/Failure evidence memory, and optional language-intelligence adapters. These are design-current but not yet fully implemented source behavior.
+Architecture v3 source implementation has started with `src/integrity-control.ts`, which defines typed `TransformationContract`, `TransformationRun`, `AttemptRecord`, `MeaningEvidenceGraph`, `ErrorDelta`, and bounded correction-route vocabulary. It also deterministically classifies semantic-verdict failures into critical error categories and selects `PASS / LOCAL_FIX / FRESH_REGENERATE / REANALYZE / FAIL_CLOSED` without changing the public translation API yet. Runtime wiring of those contracts into `src/engine.ts` remains a separate change unit.
 
 ## Current completion phase
 
@@ -47,6 +47,7 @@ Source-side completion gates currently include:
 - semantic equivalence and requested-language verification;
 - retry from ORIGINAL input only;
 - fail-closed source-language mismatch and invalid semantic-language detection;
+- typed Architecture v3 integrity-control contracts and deterministic error-delta routing;
 - a 13-case multilingual/adversarial regression seed covering negation, prohibitions, conditions, exceptions, quantities, deadlines, ordering, permissions, mixed scripts, low-resource Swahili, and embedded prompt-injection text;
 - a service benchmark that exits non-zero on HTTP/contract failure, empty translation, protected-literal loss, or any external translation API call;
 - a bounded fail-open TGserver ZERO P007 runtime producer for `asteria_started`, `translate_succeeded`, and `translate_failed`.
@@ -80,7 +81,7 @@ Original Input / Context (Authority)
 
 The **Original Input remains the semantic authority**. `MeaningEvidenceGraph` is evidence extracted from the original and must never silently replace or override it. Unknown or ambiguous meaning is preserved as unresolved rather than guessed.
 
-The current executable translation path remains the existing `/internal/v1/translate` flow until Architecture v3 source implementation lands. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/DESIGN_DELTA.md`](docs/DESIGN_DELTA.md).
+The current executable translation path remains the existing `/internal/v1/translate` flow while Architecture v3 source contracts are progressively wired into it. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/DESIGN_DELTA.md`](docs/DESIGN_DELTA.md).
 
 asteria does not know Astera App's eight result keys.
 
