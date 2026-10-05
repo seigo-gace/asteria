@@ -8,6 +8,7 @@ export type RuntimeConfig = {
   aiCoreApiKey: string;
   translationTimeoutMs: number;
   maxBodyBytes: number;
+  memoryFile?: string;
 };
 
 function positiveInt(raw: string | undefined, fallback: number, code: string): number {
@@ -15,9 +16,11 @@ function positiveInt(raw: string | undefined, fallback: number, code: string): n
   if (!Number.isInteger(value) || value <= 0) throw codedError(code, `${code} must be a positive integer.`);
   return value;
 }
-
-function localHost(host: string): boolean {
-  return new Set(['127.0.0.1', 'localhost', '::1', '[::1]']).has(host);
+function localHost(host: string): boolean { return new Set(['127.0.0.1', 'localhost', '::1', '[::1]']).has(host); }
+function absolutePath(raw: string | undefined, fallback: string, code: string): string {
+  const value = raw?.trim() || fallback;
+  if (!value.startsWith('/')) throw codedError(code, `${code} must be an absolute path.`);
+  return value;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -35,5 +38,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     aiCoreApiKey,
     translationTimeoutMs: positiveInt(env.ASTERIA_TRANSLATION_TIMEOUT_MS, 90_000, 'ASTERIA_TIMEOUT_INVALID'),
     maxBodyBytes: positiveInt(env.ASTERIA_MAX_BODY_BYTES, 1_000_000, 'ASTERIA_MAX_BODY_BYTES_INVALID'),
+    memoryFile: absolutePath(env.ASTERIA_MEMORY_FILE, '/app/data/translation-memory.jsonl', 'ASTERIA_MEMORY_FILE_INVALID')
   };
 }
