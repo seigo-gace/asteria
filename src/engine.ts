@@ -29,7 +29,7 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
   const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, evidenceValidations: 0, semanticValidations: 0, semanticRetries: 0, sourceReanalyses: 0, riskFocusedGenerations: 0, normalizationAttempts: 0, normalizationAccepts: 0, normalizationRejects: 0, normalizationValidations: 0, memoryHits: 0, memoryReopened: 0, memoryWrites: 0, memoryErrors: 0 };
   const add = (engine: EngineResult) => { totals.calls += 1; totals.inputTokens += engine.inputTokens; totals.outputTokens += engine.outputTokens; };
   const output = request.segments.map((segment) => ({ ...segment })); let detectedSourceLanguage: string | undefined;
-  const bindingDigest = translationInputBindingDigest({ profileVersion: PROFILE_VERSION, sourceLanguage: request.sourceLanguage, targetLanguage: request.targetLanguage, translatorModel: QWEN_MODEL_ID, validatorModel: GRANITE_MODEL_ID, originals });
+  const bindingDigest = translationInputBindingDigest({ profileVersion: PROFILE_VERSION, ...(request.sourceLanguage ? { sourceLanguage: request.sourceLanguage } : {}), targetLanguage: request.targetLanguage, translatorModel: QWEN_MODEL_ID, validatorModel: GRANITE_MODEL_ID, originals });
 
   if (active.length) {
     const originalBatch = serializeMeaningBatch(originals), attempts: AttemptRecord[] = [], focused = risk.requiresFocusedMeaningAcquisition, normalizationNeeded = focused && risk.signals.some((signal) => NORMALIZATION_SIGNALS.has(signal));
