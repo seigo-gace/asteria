@@ -3,6 +3,7 @@ import { codedError } from './errors.js';
 import { evidenceIntegrityFailureSummary, evidenceIntegrityPass, evidenceIntegrityVerdict } from './evidence-integrity.js';
 import { createTranslationContract, errorDeltaGuidance, semanticErrorDeltas, selectCorrectionRoute, type AttemptRecord, type TransformationRun } from './integrity-control.js';
 import { canonicalLanguage, sameLanguage } from './language.js';
+import { meaningPreservingNormalizationCandidate, normalizationEquivalencePass, normalizationEquivalenceVerdict } from './normalization.js';
 import { decodeBatch, deterministicValidationError, encodeBatch, guidanceBlock, inspectProtectedLiterals, serializeMeaningBatch, translationInstruction, validateBatchStructure, type TranslationStrategy } from './quality.js';
 import { classifyTranslationRisk, riskGuidance, type RiskClass, type RiskSignal } from './risk-router.js';
 import { meaningRecord, reanalysisRecord, SEMANTIC_PASS_SCORE, semanticPass, semanticVerdict } from './semantic.js';
@@ -10,7 +11,7 @@ import { meaningRecord, reanalysisRecord, SEMANTIC_PASS_SCORE, semanticPass, sem
 export const PROFILE_VERSION = 'asteria-translation-v1';
 export type TranslationSegment = { id: string; text: string };
 export type TranslationRequest = { request_id: string; profile_version: string; target_language: string; source_language?: string; glossary_id?: string; segments: TranslationSegment[] };
-export type TranslationUsage = { provider: 'ai_core_qwen3'; model: string; validation_model: string; calls: number; input_tokens: number; output_tokens: number; external_api_calls: 0; validation_fallbacks: number; evidence_validations: number; semantic_validations: number; semantic_retries: number; source_reanalyses: number; risk_focused_generations: number; risk_class: RiskClass; risk_signals: readonly RiskSignal[] };
+export type TranslationUsage = { provider: 'ai_core_qwen3'; model: string; validation_model: string; calls: number; input_tokens: number; output_tokens: number; external_api_calls: 0; validation_fallbacks: number; evidence_validations: number; semantic_validations: number; semantic_retries: number; source_reanalyses: number; risk_focused_generations: number; normalization_attempts: number; normalization_accepts: number; normalization_rejects: number; normalization_validations: number; risk_class: RiskClass; risk_signals: readonly RiskSignal[] };
 export type TranslationResponse = { request_id: string; profile_version: string; source_language?: string; detected_source_language?: string; target_language: string; language_capability_status: 'NOT_VERIFIED'; segments: TranslationSegment[]; usage: TranslationUsage };
 export type EngineConfig = { aiCore: AiCoreConfig; timeoutMs: number };
 type BatchResult = EngineResult & { bodies: string[] };
@@ -65,7 +66,7 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
   const active = request.segments.map((segment, index) => ({ segment, index })).filter(({ segment }) => segment.text.trim());
   const originals = active.map(({ segment }) => segment.text);
   const risk = classifyTranslationRisk(originals, inspectProtectedLiterals);
-  const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, evidenceValidations: 0, semanticValidations: 0, semanticRetries: 0, sourceReanalyses: 0, riskFocusedGenerations: 0 };
+  const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, evidenceValidations: 0, semanticValidations: 0, semanticRetries: 0, sourceReanalyses: 0, riskFocusedGenerations: 0, normalizationAttempts: 0, normalizationAccepts: 0, normalizationRejects: 0, normalizationValidations: 0 };
   const add = (engine: EngineResult) => {
     totals.calls += 1;
     totals.inputTokens += engine.inputTokens;
@@ -77,7 +78,35 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
   if (active.length) {
     const originalBatch = serializeMeaningBatch(originals);
     const attempts: AttemptRecord[] = [];
-    const sourceMeaning = await meaningRecord(config.aiCore, originalBatch, config.timeoutMs);
+    const focused = risk.requiresFocusedMeaningAcquisition;
+    let meaningInputBatch = originalBatch;
+    let normalizationAccepted = false;
+
+    if (focused) {
+      totals.normalizationAttempts += 1;
+      try {
+        const normalization = await meaningPreservingNormalizationCandidate(config.aiCore, originals, request.sourceLanguage, config.timeoutMs);
+        add(normalization.result);
+        const normalizedBatch = serializeMeaningBatch(normalization.bodies);
+        const normalizationCheck = await normalizationEquivalenceVerdict(config.aiCore, originalBatch, normalizedBatch, config.timeoutMs);
+        add(normalizationCheck.result);
+        totals.normalizationValidations += 1;
+        if (normalizationEquivalencePass(normalizationCheck.verdict)) {
+          meaningInputBatch = normalizedBatch;
+          normalizationAccepted = true;
+          totals.normalizationAccepts += 1;
+        } else {
+          totals.normalizationRejects += 1;
+        }
+      } catch (error) {
+        if (!deterministicValidationError(error)) throw error;
+        const failedUsage = (error as { engineUsage?: EngineResult }).engineUsage;
+        if (failedUsage) add(failedUsage);
+        totals.normalizationRejects += 1;
+      }
+    }
+
+    const sourceMeaning = await meaningRecord(config.aiCore, meaningInputBatch, config.timeoutMs);
     add(sourceMeaning.result);
     detectedSourceLanguage = sourceMeaning.detectedLanguage;
     const run: TransformationRun = { runId: request.requestId, original: originals, contract, risk, sourceEvidence: sourceMeaning.graph, attempts };
@@ -90,9 +119,10 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
       throw codedError('TRANSLATION_EVIDENCE_INTEGRITY_FAILED', `Source evidence graph is not safely grounded in ORIGINAL: ${evidenceIntegrityFailureSummary(evidenceCheck.verdict)}`, false, 422);
     }
 
-    const focused = run.risk.requiresFocusedMeaningAcquisition;
     const initialStrategy: TranslationStrategy = focused ? 'risk_focused' : 'document';
-    const initialGuidance = focused ? riskGuidance(run.risk) : '';
+    const initialGuidance = focused
+      ? [riskGuidance(run.risk), `NORMALIZATION_ACCEPTED=${normalizationAccepted ? '1' : '0'}`, `VERIFIED_SOURCE_EVIDENCE=${sourceMeaning.record}`].filter(Boolean).join('\n')
+      : '';
     let candidate: BatchResult;
     try {
       if (focused) totals.riskFocusedGenerations += 1;
@@ -198,6 +228,10 @@ export async function translateSegments(input: unknown, config: EngineConfig): P
       semantic_retries: totals.semanticRetries,
       source_reanalyses: totals.sourceReanalyses,
       risk_focused_generations: totals.riskFocusedGenerations,
+      normalization_attempts: totals.normalizationAttempts,
+      normalization_accepts: totals.normalizationAccepts,
+      normalization_rejects: totals.normalizationRejects,
+      normalization_validations: totals.normalizationValidations,
       risk_class: risk.riskClass,
       risk_signals: risk.signals
     }

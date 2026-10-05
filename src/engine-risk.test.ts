@@ -12,53 +12,87 @@ type RequestBody = { model: string; messages: Array<{ role: string; content: str
 function body(init: RequestInit | undefined): RequestBody { return JSON.parse(String(init?.body)) as RequestBody; }
 function user(request: RequestBody): string { return request.messages.find((item) => item.role === 'user')?.content ?? ''; }
 function system(request: RequestBody): string { return request.messages.find((item) => item.role === 'system')?.content ?? ''; }
-function translation(request: RequestBody): boolean { return request.model === QWEN && user(request).includes('BEGIN_BATCH'); }
+function translation(request: RequestBody): boolean { return request.model === QWEN && system(request).includes('translation-only runtime'); }
+function normalization(request: RequestBody): boolean { return request.model === QWEN && system(request).includes('meaning-preserving source normalizer'); }
 function response(model: string, content: string): Response { return new Response(JSON.stringify({ model, choices: [{ message: { content } }], usage: { prompt_tokens: 12, completion_tokens: 8 } }), { status: 200, headers: { 'content-type': 'application/json' } }); }
 function evidencePass(): string { return JSON.stringify({ valid: true, score: 1, unsupported_evidence: [], contradictions: [], invented_resolutions: [] }); }
 function semanticPass(): string { return JSON.stringify({ equivalent: true, score: 1, target_language_match: true, critical_differences: [] }); }
+function normalizationPass(): string { return JSON.stringify({ equivalent: true, score: 1, same_language: true, critical_differences: [] }); }
+function normalizationFail(): string { return JSON.stringify({ equivalent: false, score: 0.4, same_language: true, critical_differences: ['negation changed'] }); }
 
-async function run(text: string): Promise<{ out: Awaited<ReturnType<typeof translateSegments>>; translationRequest: RequestBody }> {
+async function run(text: string, normalizationAccepted = true): Promise<{ out: Awaited<ReturnType<typeof translateSegments>>; translationRequest: RequestBody; meaningRequests: RequestBody[] }> {
   const old = globalThis.fetch;
   let translationRequest: RequestBody | undefined;
+  const meaningRequests: RequestBody[] = [];
   globalThis.fetch = async (_input, init) => {
     const request = body(init);
+    if (normalization(request)) {
+      const batch = user(request).match(/BEGIN_BATCH\n([\s\S]*)\nEND_BATCH$/)?.[1] ?? '';
+      const normalized = normalizationAccepted ? batch : batch.replace('Do not publish', 'Publish');
+      return response(QWEN_RESPONSE, normalized);
+    }
     if (translation(request)) {
       translationRequest = request;
       const batch = user(request).match(/BEGIN_BATCH\n([\s\S]*)\nEND_BATCH$/)?.[1] ?? '';
       return response(QWEN_RESPONSE, batch);
     }
-    if (request.model === QWEN) return response(QWEN_RESPONSE, MEANING_EN);
+    if (request.model === QWEN) {
+      meaningRequests.push(request);
+      return response(QWEN_RESPONSE, MEANING_EN);
+    }
+    if (system(request).includes('normalization-equivalence judge')) return response(GRANITE_RESPONSE, normalizationAccepted ? normalizationPass() : normalizationFail());
     if (system(request).includes('evidence-integrity judge')) return response(GRANITE_RESPONSE, evidencePass());
     return response(GRANITE_RESPONSE, semanticPass());
   };
   try {
     const out = await translateSegments({ request_id: 'risk-route', profile_version: PROFILE_VERSION, source_language: 'en', target_language: 'ja', segments: [{ id: 's1', text }] }, CONFIG);
     assert.ok(translationRequest);
-    return { out, translationRequest };
+    return { out, translationRequest, meaningRequests };
   } finally {
     globalThis.fetch = old;
   }
 }
 
-test('high-risk source selects risk-focused generation without adding model calls or skipping integrity gates', async () => {
+test('high-risk source uses gated normalization and risk-focused generation while keeping integrity gates', async () => {
   const { out, translationRequest } = await run('Do not publish this unless approved before 2026-12-31.');
   assert.match(user(translationRequest), /STRATEGY=risk_focused/);
   assert.match(user(translationRequest), /RISK_CLASS=high-risk/);
-  assert.match(user(translationRequest), /negation/);
-  assert.match(user(translationRequest), /condition/);
+  assert.match(user(translationRequest), /NORMALIZATION_ACCEPTED=1/);
+  assert.match(user(translationRequest), /VERIFIED_SOURCE_EVIDENCE=/);
   assert.equal(out.usage.risk_class, 'high-risk');
   assert.equal(out.usage.risk_focused_generations, 1);
+  assert.equal(out.usage.normalization_attempts, 1);
+  assert.equal(out.usage.normalization_accepts, 1);
+  assert.equal(out.usage.normalization_rejects, 0);
+  assert.equal(out.usage.normalization_validations, 1);
   assert.equal(out.usage.evidence_validations, 1);
-  assert.equal(out.usage.calls, 5);
+  assert.equal(out.usage.calls, 7);
   assert.equal(out.usage.external_api_calls, 0);
 });
 
-test('simple source keeps existing document generation path with the same integrity gates', async () => {
+test('normalization semantic rejection discards candidate and returns to ORIGINAL for meaning acquisition', async () => {
+  const original = 'Do not publish this unless approved before 2026-12-31.';
+  const { out, translationRequest, meaningRequests } = await run(original, false);
+  assert.equal(out.usage.normalization_attempts, 1);
+  assert.equal(out.usage.normalization_accepts, 0);
+  assert.equal(out.usage.normalization_rejects, 1);
+  assert.equal(out.usage.normalization_validations, 1);
+  assert.match(user(translationRequest), /NORMALIZATION_ACCEPTED=0/);
+  assert.ok(meaningRequests.length >= 2);
+  assert.match(user(meaningRequests[0]!), /Do not publish/);
+  assert.doesNotMatch(user(meaningRequests[0]!), /Publish this unless approved/);
+});
+
+test('simple source keeps existing document generation path without normalization overhead', async () => {
   const { out, translationRequest } = await run('Hello world.');
   assert.match(user(translationRequest), /STRATEGY=document/);
   assert.doesNotMatch(user(translationRequest), /RISK_CLASS=/);
   assert.equal(out.usage.risk_class, 'simple');
   assert.equal(out.usage.risk_focused_generations, 0);
+  assert.equal(out.usage.normalization_attempts, 0);
+  assert.equal(out.usage.normalization_accepts, 0);
+  assert.equal(out.usage.normalization_rejects, 0);
+  assert.equal(out.usage.normalization_validations, 0);
   assert.equal(out.usage.evidence_validations, 1);
   assert.equal(out.usage.calls, 5);
   assert.equal(out.usage.external_api_calls, 0);
