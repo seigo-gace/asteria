@@ -74,19 +74,19 @@ function classifyDifference(detail: string): ErrorDeltaKind {
   const text = detail.toLowerCase();
   if (/untranslated|target language|wrong language|language mismatch/.test(text)) return 'wrong_language';
   if (/ambigu|uncertain|unknown|guess|resolved without evidence/.test(text)) return 'unresolved_guess';
-  if (/omit|missing|dropped|removed|lost/.test(text)) return 'omission';
-  if (/unsupported|added|invented|hallucinat/.test(text)) return 'unsupported_addition';
   if (/negat|polarity|must not|prohibit|forbid/.test(text)) return 'polarity';
   if (/condition|exception|\bif\b|unless|except/.test(text)) return 'condition_exception';
   if (/modality|\bmust\b|\bmay\b|\bshould\b|required|optional|permission/.test(text)) return 'modality';
   if (/quantity|number|amount|percent|date|deadline|time|before|after/.test(text)) return 'quantity_time';
+  if (/contradict|opposite|reversed/.test(text)) return 'contradiction';
+  if (/unsupported|added|invented|hallucinat/.test(text)) return 'unsupported_addition';
+  if (/omit|missing|dropped|removed|lost/.test(text)) return 'omission';
   if (/entity|reference|referent|pronoun|subject|object/.test(text)) return 'entity_reference';
   if (/literal|placeholder|structure|marker|url|code token/.test(text)) return 'literal_structure';
-  if (/contradict|opposite|reversed/.test(text)) return 'contradiction';
   return 'semantic_other';
 }
 
-export function semanticErrorDeltas(verdict: SemanticVerdictLike): ErrorDelta[] {
+export function semanticErrorDeltas(verdict: SemanticVerdictLike, minimumScore = 0.98): ErrorDelta[] {
   const deltas: ErrorDelta[] = [];
   if (!verdict.targetLanguageMatch) {
     deltas.push({ kind: 'wrong_language', severity: 'critical', detail: 'Candidate output does not match the requested target language.' });
@@ -96,7 +96,7 @@ export function semanticErrorDeltas(verdict: SemanticVerdictLike): ErrorDelta[] 
     if (!trimmed) continue;
     deltas.push({ kind: classifyDifference(trimmed), severity: 'critical', detail: trimmed });
   }
-  if ((!verdict.equivalent || verdict.score < 0.98) && deltas.length === 0) {
+  if ((!verdict.equivalent || verdict.score < minimumScore) && deltas.length === 0) {
     deltas.push({ kind: 'semantic_other', severity: 'critical', detail: `Semantic equivalence score ${verdict.score.toFixed(3)} did not pass.` });
   }
   return deltas;

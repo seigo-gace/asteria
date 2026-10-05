@@ -1,5 +1,6 @@
 import { GRANITE_MODEL_ID, QWEN_MODEL_ID, requestAiCore, type AiCoreConfig, type EngineResult } from './ai-core.js';
 import { codedError } from './errors.js';
+import { createTranslationContract, errorDeltaGuidance, semanticErrorDeltas, selectCorrectionRoute, type AttemptRecord, type TransformationRun } from './integrity-control.js';
 import { canonicalLanguage, sameLanguage } from './language.js';
 import { decodeBatch, deterministicValidationError, encodeBatch, guidanceBlock, serializeMeaningBatch, translationInstruction, validateBatchStructure, type TranslationStrategy } from './quality.js';
 import { meaningRecord, SEMANTIC_PASS_SCORE, semanticPass, semanticVerdict } from './semantic.js';
@@ -11,8 +12,151 @@ export type TranslationUsage = { provider: 'ai_core_qwen3'; model: string; valid
 export type TranslationResponse = { request_id: string; profile_version: string; source_language?: string; detected_source_language?: string; target_language: string; language_capability_status: 'NOT_VERIFIED'; segments: TranslationSegment[]; usage: TranslationUsage };
 export type EngineConfig = { aiCore: AiCoreConfig; timeoutMs: number };
 type BatchResult = EngineResult & { bodies: string[] };
-function validRequestId(value: unknown): string { if (typeof value !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) throw codedError('REQUEST_ID_INVALID', 'request_id must be 1-128 safe identifier characters.', false, 400); return value; }
-function validateSegments(value: unknown): TranslationSegment[] { if (!Array.isArray(value) || value.length < 1 || value.length > 128) throw codedError('SEGMENTS_INVALID', 'segments must contain 1-128 ordered items.', false, 400); const seen = new Set<string>(); return value.map((item, index) => { if (!item || typeof item !== 'object' || Array.isArray(item)) throw codedError('SEGMENT_INVALID', `segment ${index} is invalid.`, false, 400); const id = (item as { id?: unknown }).id; const text = (item as { text?: unknown }).text; if (typeof id !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(id) || seen.has(id)) throw codedError('SEGMENT_ID_INVALID', `segment ${index} id is invalid or duplicated.`, false, 400); if (typeof text !== 'string') throw codedError('SEGMENT_TEXT_INVALID', `segment ${index} text must be a string.`, false, 400); seen.add(id); return { id, text }; }); }
-function parseRequest(input: unknown): { requestId: string; targetLanguage: string; sourceLanguage?: string; segments: TranslationSegment[] } { if (!input || typeof input !== 'object' || Array.isArray(input)) throw codedError('REQUEST_INVALID', 'Request body must be an object.', false, 400); const body = input as TranslationRequest; const requestId = validRequestId(body.request_id); if (body.profile_version !== PROFILE_VERSION) throw codedError('PROFILE_VERSION_UNSUPPORTED', `profile_version must be ${PROFILE_VERSION}.`, false, 400); const targetLanguage = canonicalLanguage(body.target_language, 'target_language'); const sourceLanguage = body.source_language === undefined || body.source_language === '' ? undefined : canonicalLanguage(body.source_language, 'source_language'); if (typeof body.glossary_id === 'string' && body.glossary_id.trim()) throw codedError('TRANSLATION_GLOSSARY_NOT_IMPLEMENTED', 'glossary_id is reserved but not implemented; request rejected instead of silently ignoring it.', false, 409); if (body.glossary_id !== undefined && typeof body.glossary_id !== 'string') throw codedError('GLOSSARY_ID_INVALID', 'glossary_id must be a string when supplied.', false, 400); const segments = validateSegments(body.segments); return { requestId, targetLanguage, ...(sourceLanguage ? { sourceLanguage } : {}), segments }; }
-async function translateBatch(aiCore: AiCoreConfig, bodies: string[], targetLanguage: string, sourceLanguage: string | undefined, strategy: TranslationStrategy, timeoutMs: number, guidance = ''): Promise<BatchResult> { const encoded = encodeBatch(bodies); const response = await requestAiCore(aiCore, QWEN_MODEL_ID, translationInstruction(strategy), `TARGET_LANGUAGE=${targetLanguage}\nSOURCE_LANGUAGE=${sourceLanguage ?? 'AUTO'}\nSTRATEGY=${strategy}${guidanceBlock(strategy, guidance)}\nBEGIN_BATCH\n${encoded.text}\nEND_BATCH`, timeoutMs, 8192); try { const translated = decodeBatch(response.text, bodies.length, encoded.tokens); validateBatchStructure(bodies, translated); return { ...response, bodies: translated }; } catch (error) { throw Object.assign(error instanceof Error ? error : new Error('translation validation failed'), { engineUsage: response }); } }
-export async function translateSegments(input: unknown, config: EngineConfig): Promise<TranslationResponse> { const request = parseRequest(input); const active = request.segments.map((segment, index) => ({ segment, index })).filter(({ segment }) => segment.text.trim()); const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, semanticValidations: 0, semanticRetries: 0 }; const add = (engine: EngineResult) => { totals.calls += 1; totals.inputTokens += engine.inputTokens; totals.outputTokens += engine.outputTokens; }; const output = request.segments.map((segment) => ({ ...segment })); let detectedSourceLanguage: string | undefined; if (active.length) { const originals = active.map(({ segment }) => segment.text); const sourceMeaning = await meaningRecord(config.aiCore, serializeMeaningBatch(originals), config.timeoutMs); add(sourceMeaning.result); detectedSourceLanguage = sourceMeaning.detectedLanguage; if (request.sourceLanguage && !sameLanguage(request.sourceLanguage, detectedSourceLanguage)) throw codedError('SOURCE_LANGUAGE_MISMATCH', `Detected source language ${detectedSourceLanguage} does not match requested ${request.sourceLanguage}.`, false, 422); let candidate: BatchResult; try { candidate = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, 'document', config.timeoutMs); add(candidate); } catch (error) { if (!deterministicValidationError(error)) throw error; const failedUsage = (error as { engineUsage?: EngineResult }).engineUsage; if (failedUsage) add(failedUsage); totals.validationFallbacks += 1; candidate = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, 'lines', config.timeoutMs); add(candidate); } const candidateMeaning = await meaningRecord(config.aiCore, serializeMeaningBatch(candidate.bodies), config.timeoutMs); add(candidateMeaning.result); const first = await semanticVerdict(config.aiCore, sourceMeaning.record, candidateMeaning.record, request.targetLanguage, config.timeoutMs); add(first.result); totals.semanticValidations += 1; if (!semanticPass(first.verdict)) { totals.semanticRetries += 1; const guidanceParts = [...first.verdict.criticalDifferences]; if (!first.verdict.targetLanguageMatch) guidanceParts.push(`Candidate prose must be translated into requested target language ${request.targetLanguage}; do not leave source prose untranslated.`); if (!guidanceParts.length) guidanceParts.push(`Semantic score ${first.verdict.score.toFixed(3)} was below ${SEMANTIC_PASS_SCORE}. Preserve every material meaning exactly.`); const retry = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, 'semantic_retry', config.timeoutMs, guidanceParts.join('\n')); add(retry); const retryMeaning = await meaningRecord(config.aiCore, serializeMeaningBatch(retry.bodies), config.timeoutMs); add(retryMeaning.result); const second = await semanticVerdict(config.aiCore, sourceMeaning.record, retryMeaning.record, request.targetLanguage, config.timeoutMs); add(second.result); totals.semanticValidations += 1; if (!semanticPass(second.verdict)) { const languageStatus = second.verdict.targetLanguageMatch ? 'match' : 'mismatch'; throw codedError('TRANSLATION_SEMANTIC_EQUIVALENCE_FAILED', `Translation failed semantic equivalence after retry: score=${second.verdict.score.toFixed(3)}; target_language=${languageStatus}; differences=${second.verdict.criticalDifferences.join(' | ') || 'unspecified'}`, false, 422); } candidate = retry; } active.forEach(({ index }, translatedIndex) => { output[index] = { ...output[index]!, text: candidate.bodies[translatedIndex] ?? output[index]!.text }; }); } return { request_id: request.requestId, profile_version: PROFILE_VERSION, ...(request.sourceLanguage ? { source_language: request.sourceLanguage } : {}), ...(detectedSourceLanguage ? { detected_source_language: detectedSourceLanguage } : {}), target_language: request.targetLanguage, language_capability_status: 'NOT_VERIFIED', segments: output, usage: { provider: 'ai_core_qwen3', model: QWEN_MODEL_ID, validation_model: GRANITE_MODEL_ID, calls: totals.calls, input_tokens: totals.inputTokens, output_tokens: totals.outputTokens, external_api_calls: 0, validation_fallbacks: totals.validationFallbacks, semantic_validations: totals.semanticValidations, semantic_retries: totals.semanticRetries } }; }
+
+function validRequestId(value: unknown): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) throw codedError('REQUEST_ID_INVALID', 'request_id must be 1-128 safe identifier characters.', false, 400);
+  return value;
+}
+
+function validateSegments(value: unknown): TranslationSegment[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 128) throw codedError('SEGMENTS_INVALID', 'segments must contain 1-128 ordered items.', false, 400);
+  const seen = new Set<string>();
+  return value.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw codedError('SEGMENT_INVALID', `segment ${index} is invalid.`, false, 400);
+    const id = (item as { id?: unknown }).id;
+    const text = (item as { text?: unknown }).text;
+    if (typeof id !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(id) || seen.has(id)) throw codedError('SEGMENT_ID_INVALID', `segment ${index} id is invalid or duplicated.`, false, 400);
+    if (typeof text !== 'string') throw codedError('SEGMENT_TEXT_INVALID', `segment ${index} text must be a string.`, false, 400);
+    seen.add(id);
+    return { id, text };
+  });
+}
+
+function parseRequest(input: unknown): { requestId: string; targetLanguage: string; sourceLanguage?: string; segments: TranslationSegment[] } {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw codedError('REQUEST_INVALID', 'Request body must be an object.', false, 400);
+  const body = input as TranslationRequest;
+  const requestId = validRequestId(body.request_id);
+  if (body.profile_version !== PROFILE_VERSION) throw codedError('PROFILE_VERSION_UNSUPPORTED', `profile_version must be ${PROFILE_VERSION}.`, false, 400);
+  const targetLanguage = canonicalLanguage(body.target_language, 'target_language');
+  const sourceLanguage = body.source_language === undefined || body.source_language === '' ? undefined : canonicalLanguage(body.source_language, 'source_language');
+  if (typeof body.glossary_id === 'string' && body.glossary_id.trim()) throw codedError('TRANSLATION_GLOSSARY_NOT_IMPLEMENTED', 'glossary_id is reserved but not implemented; request rejected instead of silently ignoring it.', false, 409);
+  if (body.glossary_id !== undefined && typeof body.glossary_id !== 'string') throw codedError('GLOSSARY_ID_INVALID', 'glossary_id must be a string when supplied.', false, 400);
+  const segments = validateSegments(body.segments);
+  return { requestId, targetLanguage, ...(sourceLanguage ? { sourceLanguage } : {}), segments };
+}
+
+async function translateBatch(aiCore: AiCoreConfig, bodies: string[], targetLanguage: string, sourceLanguage: string | undefined, strategy: TranslationStrategy, timeoutMs: number, guidance = ''): Promise<BatchResult> {
+  const encoded = encodeBatch(bodies);
+  const response = await requestAiCore(aiCore, QWEN_MODEL_ID, translationInstruction(strategy), `TARGET_LANGUAGE=${targetLanguage}\nSOURCE_LANGUAGE=${sourceLanguage ?? 'AUTO'}\nSTRATEGY=${strategy}${guidanceBlock(strategy, guidance)}\nBEGIN_BATCH\n${encoded.text}\nEND_BATCH`, timeoutMs, 8192);
+  try {
+    const translated = decodeBatch(response.text, bodies.length, encoded.tokens);
+    validateBatchStructure(bodies, translated);
+    return { ...response, bodies: translated };
+  } catch (error) {
+    throw Object.assign(error instanceof Error ? error : new Error('translation validation failed'), { engineUsage: response });
+  }
+}
+
+export async function translateSegments(input: unknown, config: EngineConfig): Promise<TranslationResponse> {
+  const request = parseRequest(input);
+  const contract = createTranslationContract(request.targetLanguage, request.sourceLanguage);
+  const active = request.segments.map((segment, index) => ({ segment, index })).filter(({ segment }) => segment.text.trim());
+  const totals = { calls: 0, inputTokens: 0, outputTokens: 0, validationFallbacks: 0, semanticValidations: 0, semanticRetries: 0 };
+  const add = (engine: EngineResult) => {
+    totals.calls += 1;
+    totals.inputTokens += engine.inputTokens;
+    totals.outputTokens += engine.outputTokens;
+  };
+  const output = request.segments.map((segment) => ({ ...segment }));
+  let detectedSourceLanguage: string | undefined;
+
+  if (active.length) {
+    const originals = active.map(({ segment }) => segment.text);
+    const attempts: AttemptRecord[] = [];
+    const run: TransformationRun = { runId: request.requestId, original: originals, contract, attempts };
+    const sourceMeaning = await meaningRecord(config.aiCore, serializeMeaningBatch(originals), config.timeoutMs);
+    add(sourceMeaning.result);
+    detectedSourceLanguage = sourceMeaning.detectedLanguage;
+    if (request.sourceLanguage && !sameLanguage(request.sourceLanguage, detectedSourceLanguage)) throw codedError('SOURCE_LANGUAGE_MISMATCH', `Detected source language ${detectedSourceLanguage} does not match requested ${request.sourceLanguage}.`, false, 422);
+
+    let candidate: BatchResult;
+    try {
+      candidate = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, 'document', config.timeoutMs);
+      add(candidate);
+    } catch (error) {
+      if (!deterministicValidationError(error)) throw error;
+      const failedUsage = (error as { engineUsage?: EngineResult }).engineUsage;
+      if (failedUsage) add(failedUsage);
+      totals.validationFallbacks += 1;
+      candidate = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, 'lines', config.timeoutMs);
+      add(candidate);
+    }
+
+    const candidateMeaning = await meaningRecord(config.aiCore, serializeMeaningBatch(candidate.bodies), config.timeoutMs);
+    add(candidateMeaning.result);
+    const first = await semanticVerdict(config.aiCore, sourceMeaning.record, candidateMeaning.record, request.targetLanguage, config.timeoutMs);
+    add(first.result);
+    totals.semanticValidations += 1;
+
+    if (!semanticPass(first.verdict)) {
+      const firstDeltas = semanticErrorDeltas(first.verdict, SEMANTIC_PASS_SCORE);
+      const firstRoute = selectCorrectionRoute(firstDeltas, 1);
+      attempts.push({ attempt: 1, route: firstRoute, errors: firstDeltas });
+
+      if (firstRoute === 'REANALYZE') {
+        throw codedError('TRANSLATION_REANALYSIS_REQUIRED', `Translation candidate indicates unresolved or guessed meaning that requires source reanalysis before another generation: ${errorDeltaGuidance(firstDeltas)}`, false, 422);
+      }
+      if (firstRoute !== 'FRESH_REGENERATE' || run.contract.maxSemanticRegenerations < 1) {
+        throw codedError('TRANSLATION_INTEGRITY_ROUTE_UNAVAILABLE', `Translation integrity route ${firstRoute} is not executable in the current translation phase.`, false, 422);
+      }
+
+      totals.semanticRetries += 1;
+      const guidance = errorDeltaGuidance(firstDeltas) || `Semantic score ${first.verdict.score.toFixed(3)} was below ${SEMANTIC_PASS_SCORE}. Preserve every material meaning exactly.`;
+      const retry = await translateBatch(config.aiCore, originals, request.targetLanguage, request.sourceLanguage, 'semantic_retry', config.timeoutMs, guidance);
+      add(retry);
+      const retryMeaning = await meaningRecord(config.aiCore, serializeMeaningBatch(retry.bodies), config.timeoutMs);
+      add(retryMeaning.result);
+      const second = await semanticVerdict(config.aiCore, sourceMeaning.record, retryMeaning.record, request.targetLanguage, config.timeoutMs);
+      add(second.result);
+      totals.semanticValidations += 1;
+
+      if (!semanticPass(second.verdict)) {
+        const secondDeltas = semanticErrorDeltas(second.verdict, SEMANTIC_PASS_SCORE);
+        const secondRoute = selectCorrectionRoute(secondDeltas, 2);
+        attempts.push({ attempt: 2, route: secondRoute, errors: secondDeltas });
+        throw codedError('TRANSLATION_SEMANTIC_EQUIVALENCE_FAILED', `Translation failed semantic equivalence after retry: route=${secondRoute}; errors=${errorDeltaGuidance(secondDeltas) || 'unspecified'}`, false, 422);
+      }
+
+      attempts.push({ attempt: 2, route: 'PASS', errors: [] });
+      candidate = retry;
+    } else {
+      attempts.push({ attempt: 1, route: 'PASS', errors: [] });
+    }
+
+    active.forEach(({ index }, translatedIndex) => {
+      output[index] = { ...output[index]!, text: candidate.bodies[translatedIndex] ?? output[index]!.text };
+    });
+  }
+
+  return {
+    request_id: request.requestId,
+    profile_version: PROFILE_VERSION,
+    ...(request.sourceLanguage ? { source_language: request.sourceLanguage } : {}),
+    ...(detectedSourceLanguage ? { detected_source_language: detectedSourceLanguage } : {}),
+    target_language: request.targetLanguage,
+    language_capability_status: 'NOT_VERIFIED',
+    segments: output,
+    usage: {
+      provider: 'ai_core_qwen3',
+      model: QWEN_MODEL_ID,
+      validation_model: GRANITE_MODEL_ID,
+      calls: totals.calls,
+      input_tokens: totals.inputTokens,
+      output_tokens: totals.outputTokens,
+      external_api_calls: 0,
+      validation_fallbacks: totals.validationFallbacks,
+      semantic_validations: totals.semanticValidations,
+      semantic_retries: totals.semanticRetries
+    }
+  };
+}
