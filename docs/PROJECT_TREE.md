@@ -31,8 +31,11 @@ Dockerfile                           Node runtime + non-root writable /app/data
 compose.yml                          host-network service + named translation-memory volume
 .env.example                         runtime config incl. memory + optional DJPMCP settings
 scripts/raw-model-benchmark.py       diagnostic raw Qwen benchmark
-scripts/service-benchmark.py         full asteria service benchmark
-benchmarks/                          non-authoritative seed corpus
+scripts/service-benchmark.py         full service benchmark + Japanese A/B schema/run-label/report contract
+src/service-benchmark-contract.test.ts Python benchmark contract validation + OFF/ON input-binding identity tests
+benchmarks/regression-corpus.seed.jsonl existing 13-case multilingual non-authoritative seed
+benchmarks/japanese-ab-corpus.schema.json Japanese A/B v1 machine-readable non-authoritative schema
+benchmarks/japanese-ab-corpus.v1.jsonl 10-case Japanese adversarial DJPMCP OFF/ON seed
 docs/                                design/verification/migration/runtime boundaries
 ```
 

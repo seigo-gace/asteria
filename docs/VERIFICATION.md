@@ -117,6 +117,22 @@ Source-complete but acceptance-unproven:
 
 Source/CI PASS is **not** universal language correctness.
 
+## Japanese A/B Benchmark source contract
+
+Issue #6 adds Source-side measurement infrastructure without activating DJPMCP Runtime secrets/services:
+
+- versioned schema: `asteria-japanese-ab-v1` / corpus `japanese-ab-v1`;
+- 10 Japanese-source adversarial cases with explicit semantic-risk tags, protected invariants and per-case ambiguity contracts;
+- every case remains `SEED_NOT_ACCEPTANCE_AUTHORITY`; generated/reference/gold translations are structurally rejected;
+- corpus validation rejects unknown risk tags, duplicate IDs/invariants, malformed invariants, invalid ambiguity contracts and accidental authority labels;
+- `baseline` and `adapted` labels are report-only and produce identical request `input_binding_sha256` values for the same case;
+- baseline reports must show zero Japanese-adapter attempts; adapted Japanese A/B reports require an adapter attempt;
+- case reports expose latency plus `japanese_adapter_attempts / accepts / rejects / errors` separately;
+- literal preservation is automatic; semantic invariant correctness and `MUST_REMAIN_UNRESOLVED` behavior remain human-adjudicated acceptance evidence.
+
+`src/service-benchmark-contract.test.ts` executes the Python validator from the canonical Node test suite and proves valid-corpus acceptance, OFF/ON input-binding identity, authority-label rejection, generated-reference-field rejection and malformed-risk rejection.
+
+The existing 13-case multilingual seed remains unchanged and separately traceable. Passing this Source contract proves only benchmark tooling integrity, not DJPMCP quality benefit.
 ## DJPMCP runtime A/B acceptance
 
 The adapter OFF lane is the current common Translation Integrity Core. The adapter ON lane must use the same Japanese ORIGINAL, Qwen3, Granite, target language and benchmark conditions, with only DJPMCP evidence activation changed.

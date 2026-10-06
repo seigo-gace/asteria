@@ -88,6 +88,27 @@ The first optional Language Intelligence Adapter is now implemented at Source/CI
 
 Usage exposes `japanese_adapter_attempts`, `japanese_adapter_accepts`, `japanese_adapter_rejects`, and `japanese_adapter_errors`. Adapter OFF is the common-core baseline; Adapter ON is the Japanese A/B lane. Source/CI proves wiring and safety contracts only. Real quality benefit requires exact-head runtime A/B with real DJPMCP + Qwen3 + Granite.
 
+### Japanese A/B Benchmark Contract
+
+Issue #6 adds a separate versioned Japanese adversarial corpus for reproducible DJPMCP OFF/ON comparison without changing the existing 13-case multilingual seed.
+
+- `benchmarks/japanese-ab-corpus.schema.json` defines the machine-readable v1 case contract.
+- `benchmarks/japanese-ab-corpus.v1.jsonl` contains 10 Japanese-source cases covering negation, nested conditions, exceptions, permission/prohibition, modality, references/ellipsis, quantities/deadlines, ordering/causality, prompt-injection-as-data and explicit ambiguity.
+- every row is fixed to `SEED_NOT_ACCEPTANCE_AUTHORITY`; generated/reference/gold translation fields are rejected rather than treated as semantic authority.
+- literal invariants are checked automatically; semantic invariants and unresolved-ambiguity expectations are reported as human-adjudication requirements.
+- `--run-label baseline` and `--run-label adapted` only label/report the run. They do not alter request semantics; each case emits an `input_binding_sha256` so OFF/ON runs can be paired exactly.
+- a baseline run fails if DJPMCP attempts are observed; an adapted Japanese A/B run fails if no adapter attempt is observed.
+- case output separates latency, adapter usage, automatic literal invariants, semantic risk tags and human semantic invariants. A Source/CI PASS is not semantic acceptance.
+
+Source-only contract validation requires no service token:
+
+```bash
+python3 scripts/service-benchmark.py benchmarks/japanese-ab-corpus.v1.jsonl --validate-only --run-label baseline
+python3 scripts/service-benchmark.py benchmarks/japanese-ab-corpus.v1.jsonl --validate-only --run-label adapted
+```
+
+Real OFF/ON execution remains a later approved Runtime gate: run the same corpus against otherwise-identical service/model conditions, with the adapter actually OFF for `baseline` and actually ON for `adapted`, then perform human semantic adjudication.
+
 ## Current completion phase
 
 The current phase is intentionally limited to **Translation Integrity Core**: meaning preservation, safety, correctness and reproducible evidence before same-language canonical rewrite or native/style optimization.
