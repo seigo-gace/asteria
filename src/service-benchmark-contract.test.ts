@@ -24,7 +24,9 @@ function withMutatedFirstRow(mutator: (row: Record<string, unknown>) => void, ru
   const dir = mkdtempSync(path.join(tmpdir(), 'asteria-benchmark-contract-'));
   try {
     const rows = readFileSync(corpus, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line) as Record<string, unknown>);
-    mutator(rows[0]);
+    const first = rows[0];
+    if (!first) throw new Error('canonical Japanese A/B corpus must contain at least one row');
+    mutator(first);
     const file = path.join(dir, 'mutated.jsonl');
     writeFileSync(file, rows.map((row) => JSON.stringify(row)).join('\n') + '\n', 'utf8');
     run(file);
